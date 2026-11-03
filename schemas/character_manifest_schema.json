@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FrickEditorCharacterManifest",
+  "type": "object",
+  "required": ["name", "author", "version", "spawn_location", "custom_night", "states"],
+  "properties": {
+    "name": { "type": "string", "example": "Murray Moose" },
+    "author": { "type": "string", "example": "ModTeam" },
+    "version": { "type": "integer", "default": 1 },
+    "spawn_location": {
+      "type": "string",
+      "enum": ["RightWindow", "LeftWindow", "Hallway", "Vent", "Desk"],
+      "default": "RightWindow"
+    },
+    "coordinates": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "number", "default": 1462 },
+        "y": { "type": "number", "default": 1085 },
+        "depth": { "type": "integer", "default": 150 }
+      }
+    },
+    "custom_night": {
+      "type": "object",
+      "properties": {
+        "page": { "type": "integer", "default": 2 },
+        "row": { "type": "integer", "default": 0 },
+        "col": { "type": "integer", "default": 0 },
+        "default_ai": { "type": "integer", "minimum": 0, "maximum": 20, "default": 20 },
+        "tooltip": { "type": "string" }
+      }
+    },
+    "mechanics": {
+      "type": "object",
+      "properties": {
+        "sunglasses_hitbox": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "rel_x": { "type": "number", "default": -35 },
+            "rel_y": { "type": "number", "default": -30 },
+            "width": { "type": "number", "default": 70 },
+            "height": { "type": "number", "default": 60 }
+          }
+        },
+        "blind_hold_open": { "type": "boolean", "default": true },
+        "flashlight_scare": { "type": "boolean", "default": true },
+        "death_coin_vulnerable": { "type": "boolean", "default": true }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "properties": {
+        "knock_stream": { "type": "string", "default": "snd_murray_knock.ogg" },
+        "jumpscare_stream": { "type": "string", "default": "snd_murray_jumpscare.ogg" }
+      }
+    },
+    "states": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "action_blocks": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
