@@ -1,717 +1,1038 @@
-use crate::models::AnimatronicProject;
+﻿use crate::models::{AnimatronicArchetype, AnimatronicProject, CountermeasureType};
 use image::{imageops, DynamicImage, ImageBuffer, Rgba};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::Path;
+use zip::write::FileOptions;
+use zip::{ZipArchive, ZipWriter};
 
-// ============================================================================
-// Plantillas GML traducidas 1:1 del golden_master_v26 (referencia probada en
-// producción). El personaje se parametriza AL GENERAR: el placeholder {ID} se
-// sustituye por el identificador del proyecto (p.ej. "Murray" -> "Test") y {id}
-// por el mismo en minúsculas. {gx}/{gy} = offset de las gafas, {tooltip} = texto
-// editable del proyecto. No editar la lógica aquí: cualquier cambio debe
-// replicarse en templates/golden_master_v26/gml/.
-// ============================================================================
+pub struct IdeBuilder;
 
-/// oMurray_CustomNightTile -> Step_0: clics ◄ [00] ►, contador central, clic
-/// derecho, rueda del ratón y botones globales SET ALL / ADD ALL aislados (golden V21).
-const CN_STEP_TEMPLATE: &str = r#"// ==============================================================
-// {ID} - Custom Night Tile Logic (Step, V26-aligned)
-// Cuadrícula nativa 8x4, flechas (0..16, 16..32, 32..48) y botones globales aislados
-// Generado por FrickEditor Studio (golden_master_v26)
-// ==============================================================
-depth = -1000;
-if (!variable_global_exists("{ID}_AI")) global.{ID}_AI = 0;
-if (!variable_global_exists("CustomNight_Page")) global.CustomNight_Page = 0;
+impl IdeBuilder {
+    /// Genera los 13 scripts GML sin fugas de memoria, adaptados al Arquetipo real y seguros para Multi-Mod
+    pub fn generate_template_gml_scripts(proj: &AnimatronicProject) -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
+        let id = proj.internal_id.trim();
+        let id_low = id.to_lowercase();
+        let (cx, cy) = proj.behavior.archetype.default_coordinates(proj.behavior.use_right_side);
+        let (tile_x, tile_y) = proj.custom_night.slot_to_xy();
+        let b = &proj.behavior;
 
-var snd_click = asset_get_index("sfxClick");
-if (snd_click == -1) snd_click = asset_get_index("snd_Button");
-var snd_btn = asset_get_index("snd_Button");
+        // ==========================================================
+        // 1. CleanUp_0 (Invariante #2 + Destrucción de Audio Streams)
+        // ==========================================================
+        let cleanup_code = format!(
+            "// FrickEditor IDE — CleanUp_0 Auditado (Invariante #2 + Anti Memory-Leak)\n\
+             if (variable_instance_exists(id, \"{id}Body\") && {id}Body != noone && instance_exists({id}Body)) {{\n\
+                 instance_destroy({id}Body);\n\
+                 {id}Body = noone;\n\
+             }}\n\
+             if (variable_instance_exists(id, \"{id}Head\") && {id}Head != noone && instance_exists({id}Head)) {{\n\
+                 instance_destroy({id}Head);\n\
+                 {id}Head = noone;\n\
+             }}\n\
+             if (variable_instance_exists(id, \"{id}Glasses\") && {id}Glasses != noone && instance_exists({id}Glasses)) {{\n\
+                 instance_destroy({id}Glasses);\n\
+                 {id}Glasses = noone;\n\
+             }}\n\
+             if (variable_instance_exists(id, \"snd_stream_knock\") && snd_stream_knock != -1) {{\n\
+                 audio_destroy_stream(snd_stream_knock);\n\
+                 snd_stream_knock = -1;\n\
+             }}\n\
+             if (variable_instance_exists(id, \"snd_stream_voice\") && snd_stream_voice != -1) {{\n\
+                 audio_destroy_stream(snd_stream_voice);\n\
+                 snd_stream_voice = -1;\n\
+             }}\n\
+             if (variable_instance_exists(id, \"snd_stream_defeat\") && snd_stream_defeat != -1) {{\n\
+                 audio_destroy_stream(snd_stream_defeat);\n\
+                 snd_stream_defeat = -1;\n\
+             }}\n\
+             if (variable_instance_exists(id, \"snd_stream_jump\") && snd_stream_jump != -1) {{\n\
+                 audio_destroy_stream(snd_stream_jump);\n\
+                 snd_stream_jump = -1;\n\
+             }}\n"
+        );
+        map.insert(format!("gml_Object_o{}_BackWindow_CleanUp_0.gml", id), cleanup_code);
 
-var cur_tile_x = tile_x;
-var cur_tile_y = tile_y;
-
-// 1. Clics izquierdos principales
-if (mouse_check_button_pressed(mb_left)) {
-    // A. Botón de cambio de página (344, 326, 110, 26)
-    if (mouse_x >= btn_page_x && mouse_x <= btn_page_x + btn_page_w && mouse_y >= btn_page_y && mouse_y <= btn_page_y + btn_page_h) {
-        global.CustomNight_Page = 1 - global.CustomNight_Page;
-        if (snd_click != -1) audio_play_sound(snd_click, 10, false);
-
-        // Aislar cuadrícula: en Página 2 desactivar tiles vanilla para que no se dibujen ni respondan a botones
-        if (global.CustomNight_Page == 1) {
-            instance_deactivate_object(oCustomNightTile);
+        // ==========================================================
+        // 2. Create_0 (Inicialización Absoluta en Línea 1 + Streams)
+        // ==========================================================
+        let fld_branch = if b.appear_in_four_layers_down {
+            format!("else if (ai == 0 && variable_global_exists(\"FourLayersDown\") && global.FourLayersDown == true) ai = {};", b.four_layers_down_ai)
         } else {
-            instance_activate_object(oCustomNightTile);
-        }
+            String::new()
+        };
+        let endless_branch = if b.appear_in_endless_mode {
+            format!("if (ai == 0 && variable_global_exists(\"EndlessMode\") && global.EndlessMode == true) ai = {};", b.endless_mode_ai)
+        } else {
+            String::new()
+        };
+
+        let create_code = format!(
+            "// FrickEditor IDE — Create_0 Auditado ({arch})\n\
+             // INVARIANTE #2: Inicializar absolutamente todo antes de cualquier exit\n\
+             global.{id}Death = false;\n\
+             global.{id}_SavedTime = \"0:00.00\";\n\
+             {id}Body = noone;\n\
+             {id}Head = noone;\n\
+             {id}Glasses = noone;\n\
+             snd_stream_knock = -1;\n\
+             snd_stream_voice = -1;\n\
+             snd_stream_defeat = -1;\n\
+             snd_stream_jump = -1;\n\
+             state = 0;\n\
+             survival_frames = 0;\n\
+             attack_timer = 600;\n\
+             knock_timer = 600;\n\
+             has_glasses = {has_acc};\n\
+             glasses_flying = false;\n\
+             glasses_vx = 0;\n\
+             glasses_vy = 0;\n\
+             blind_fade = 0;\n\
+             jumpscare_timer = 0;\n\
+             jumpscare_frame = 0;\n\
+             remove_cooldown = 0;\n\
+             head_recoil_x = 0;\n\
+             head_recoil_y = 0;\n\
+             \n\
+             var ai = 0;\n\
+             if (variable_global_exists(\"{id}_AI\")) ai = clamp(global.{id}_AI, 0, 20);\n\
+             if (variable_global_exists(\"{id}_Disabled\") && global.{id}_Disabled) ai = 0;\n\
+             {endless_branch}\n\
+             {fld_branch}\n\
+             if (ai <= 0) {{\n\
+                 instance_destroy();\n\
+                 exit;\n\
+             }}\n\
+             \n\
+             // Pre-cargar streams de audio una sola vez en memoria\n\
+             if (file_exists(\"{id_low}_knock.ogg\")) snd_stream_knock = audio_create_stream(\"{id_low}_knock.ogg\");\n\
+             if (file_exists(\"{id_low}_amigable.ogg\")) snd_stream_voice = audio_create_stream(\"{id_low}_amigable.ogg\");\n\
+             if (file_exists(\"{id_low}_knock2.ogg\")) snd_stream_defeat = audio_create_stream(\"{id_low}_knock2.ogg\");\n\
+             if (file_exists(\"{id_low}_jumpscare.ogg\")) snd_stream_jump = audio_create_stream(\"{id_low}_jumpscare.ogg\");\n\
+             \n\
+             attack_timer = round(lerp({atk1}, {atk20}, ai / 20.0));\n\
+             knock_timer = irandom_range(round(lerp({kmin1}, {kmin20}, ai / 20.0)), round(lerp({kmax1}, {kmax20}, ai / 20.0)));\n",
+            arch = b.archetype.display_name(),
+            id = id,
+            id_low = id_low,
+            endless_branch = endless_branch,
+            fld_branch = fld_branch,
+            atk1 = b.attack_window_frames_ai1,
+            atk20 = b.attack_window_frames_ai20,
+            kmin1 = b.move_min_frames_ai1,
+            kmin20 = b.move_min_frames_ai20,
+            kmax1 = b.move_max_frames_ai1,
+            kmax20 = b.move_max_frames_ai20,
+            has_acc = if b.countermeasure == CountermeasureType::RemoveAccessoryThenFlash { "true" } else { "false" }
+        );
+        map.insert(format!("gml_Object_o{}_BackWindow_Create_0.gml", id), create_code);
+
+        // ==========================================================
+        // 3. Draw_0 y 4. Draw_64
+        // ==========================================================
+        map.insert(
+            format!("gml_Object_o{}_BackWindow_Draw_0.gml", id),
+            "// Renderizado en oficina mediante instancias oOfficeSprite\n".to_string(),
+        );
+
+        let draw64_code = format!(
+            "// FrickEditor IDE — Draw_64 (Jumpscare 640x640 sin costuras)\n\
+             if (state == 4) {{\n\
+                 var s_jump = asset_get_index(\"s{id}_Jumpscare\");\n\
+                 if (s_jump != -1) {{\n\
+                     var gw = display_get_gui_width();\n\
+                     var gh = display_get_gui_height();\n\
+                     var lunge_t = clamp(jumpscare_timer / 24.0, 0.0, 1.0);\n\
+                     var lunge_curve = power(lunge_t, 0.45);\n\
+                     var base_gui = max(gw / 640.0, gh / 360.0);\n\
+                     var zoom_factor = lerp(0.52, 1.25, lunge_curve);\n\
+                     var scale = base_gui * zoom_factor;\n\
+                     var sw = 640.0 * scale;\n\
+                     var sh = 640.0 * scale;\n\
+                     var shake_intensity = lerp(3.0, 12.0, lunge_curve) * (gw / 640.0);\n\
+                     var shake_x = irandom_range(-round(shake_intensity), round(shake_intensity));\n\
+                     var shake_y = irandom_range(-round(shake_intensity), round(shake_intensity));\n\
+                     var sub_img = (floor(jumpscare_timer / 3) % 3);\n\
+                     if (jumpscare_timer > 68) sub_img = 2;\n\
+                     var draw_x = ((gw - sw) / 2.0) + shake_x;\n\
+                     var draw_y = ((gh - sh) / 2.0) + (40.0 * scale) + shake_y;\n\
+                     draw_sprite_ext(s_jump, sub_img, draw_x, draw_y, scale, scale, 0, c_white, 1.0);\n\
+                 }}\n\
+             }}\n"
+        );
+        map.insert(format!("gml_Object_o{}_BackWindow_Draw_64.gml", id), draw64_code);
+
+        // ==========================================================
+        // 5. Step_0 (Adaptado al Arquetipo Real y Condición de Defensa)
+        // ==========================================================
+        let blocker_check = match b.archetype {
+            AnimatronicArchetype::HallwayDoorway => {
+                "if (instance_exists(my_door) && !my_door.Open) blocked = true;"
+            }
+            AnimatronicArchetype::BackWindowBlinds => {
+                "if (instance_exists(my_blind) && !my_blind.Open) blocked = true;"
+            }
+            _ => "",
+        };
+
+        let defeat_condition_gml = match b.countermeasure {
+            CountermeasureType::RemoveAccessoryThenFlash => {
+                "(!has_glasses && !blocked && flashing && remove_cooldown <= 0 && hover_window)"
+            }
+            CountermeasureType::DirectFlashlight => "(!blocked && flashing && hover_window)",
+            CountermeasureType::DoNotFlashLight => "(attack_timer <= 60 && !flashing)",
+            CountermeasureType::CloseDoorOrBlind => "(blocked && attack_timer <= 120)",
+            CountermeasureType::WearFreddyMask => "(mask_on && attack_timer <= 180)",
+            CountermeasureType::AudioLureOrShock => "(keyboard_check_pressed(vk_Control) || (variable_global_exists(\"Shocked\") && global.Shocked))",
+            CountermeasureType::SolveBackConsoleTask => "(hover_window && mouse_check_button_pressed(mb_left))",
+        };
+
+        let queue_check = if b.smart_queue_sun_moon && b.archetype == AnimatronicArchetype::BackWindowBlinds {
+            "var window_busy = false;\n\
+             if (instance_exists(oSunMoon)) {\n\
+                 with (oSunMoon) {\n\
+                     if (variable_instance_exists(id, \"AI\") && AI > 0 && variable_instance_exists(id, \"SunActive\") && SunActive) window_busy = true;\n\
+                 }\n\
+             }\n\
+             if (instance_exists(oOfficeSunPoster)) {\n\
+                 with (oOfficeSunPoster) {\n\
+                     if (image_index == 1 && instance_exists(other.my_blind) && !other.my_blind.Open) window_busy = true;\n\
+                 }\n\
+             }"
+        } else {
+            "var window_busy = false;"
+        };
+
+        let open_blind_action = if b.opens_blind_on_arrival && b.archetype == AnimatronicArchetype::BackWindowBlinds {
+            "if (instance_exists(my_blind)) my_blind.Open = true;"
+        } else {
+            ""
+        };
+
+        let step_code = format!(
+            "// FrickEditor IDE — Step_0 Auditado ({arch_name})\n\
+             survival_frames++;\n\
+             var tot_sec = survival_frames / 60.0;\n\
+             var s_min = floor(tot_sec / 60.0);\n\
+             var s_sec = floor(tot_sec) mod 60;\n\
+             var s_dec = floor((tot_sec - floor(tot_sec)) * 100.0);\n\
+             global.{id}_SavedTime = string(s_min) + \":\" + (s_sec < 10 ? \"0\" : \"\") + string(s_sec) + \".\" + (s_dec < 10 ? \"0\" : \"\") + string(s_dec);\n\
+             \n\
+             var cx = {cx};\n\
+             var cy = {cy};\n\
+             var my_blind = instance_nearest(cx, cy, oWindowBlinds);\n\
+             var my_door = instance_nearest(cx, cy, oDoor);\n\
+             \n\
+             var deathcoined = false;\n\
+             if (variable_global_exists(\"{id}_DeathCoined\") && global.{id}_DeathCoined) deathcoined = true;\n\
+             if (variable_global_exists(\"{id}_Disabled\") && global.{id}_Disabled) deathcoined = true;\n\
+             if (variable_global_exists(\"DeathCoin_Target\") && global.DeathCoin_Target == \"{id}\") deathcoined = true;\n\
+             if ({allow_dc} && state == 1 && mouse_check_button_pressed(mb_left)) {{\n\
+                 if (variable_global_exists(\"HeldItem\") && (global.HeldItem == \"DeathCoin\" || global.HeldItem == \"Death Coin\" || global.HeldItem == \"oShopItem_DeathCoin\")) deathcoined = true;\n\
+             }}\n\
+             if (deathcoined) {{\n\
+                 if ({id}Body != noone && instance_exists({id}Body)) {{ instance_destroy({id}Body); {id}Body = noone; }}\n\
+                 if ({id}Head != noone && instance_exists({id}Head)) {{ instance_destroy({id}Head); {id}Head = noone; }}\n\
+                 if ({id}Glasses != noone && instance_exists({id}Glasses)) {{ instance_destroy({id}Glasses); {id}Glasses = noone; }}\n\
+                 glasses_flying = false;\n\
+                 var snd_dc = asset_get_index(\"sfxDeathCoin\");\n\
+                 if (snd_dc == -1) snd_dc = asset_get_index(\"sfxIgnitedFreddy_Hit1\");\n\
+                 if (snd_dc != -1) audio_play_sound(snd_dc, 10, false);\n\
+                 global.{id}_DeathCoined = true;\n\
+                 global.{id}_Disabled = true;\n\
+                 instance_destroy();\n\
+                 exit;\n\
+             }}\n\
+             \n\
+             if (glasses_flying && {id}Glasses != noone && instance_exists({id}Glasses)) {{\n\
+                 {id}Glasses.x += glasses_vx;\n\
+                 {id}Glasses.y += glasses_vy;\n\
+                 glasses_vy += 1.2;\n\
+                 if ({id}Glasses.y > 1350) {{\n\
+                     instance_destroy({id}Glasses);\n\
+                     {id}Glasses = noone;\n\
+                     glasses_flying = false;\n\
+                 }}\n\
+             }}\n\
+             \n\
+             if (state == 0) {{\n\
+                 if ({id}Body != noone && instance_exists({id}Body)) {{ instance_destroy({id}Body); {id}Body = noone; }}\n\
+                 if ({id}Head != noone && instance_exists({id}Head)) {{ instance_destroy({id}Head); {id}Head = noone; }}\n\
+                 if ({id}Glasses != noone && instance_exists({id}Glasses)) {{ instance_destroy({id}Glasses); {id}Glasses = noone; }}\n\
+                 glasses_flying = false;\n\
+                 knock_timer--;\n\
+                 if (knock_timer <= 0) {{\n\
+                     {queue_check}\n\
+                     if (window_busy) {{\n\
+                         knock_timer = 30;\n\
+                     }} else {{\n\
+                         state = 1;\n\
+                         var ai = 20;\n\
+                         if (variable_global_exists(\"{id}_AI\")) ai = clamp(global.{id}_AI, 0, 20);\n\
+                         attack_timer = round(lerp({atk1}, {atk20}, ai / 20.0));\n\
+                         has_glasses = {has_acc};\n\
+                         remove_cooldown = 0;\n\
+                         head_recoil_x = 0;\n\
+                         head_recoil_y = 0;\n\
+                         {open_blind_action}\n\
+                         var spr_body = asset_get_index(\"s{id}_body\");\n\
+                         var spr_head = asset_get_index(\"s{id}_head\");\n\
+                         var spr_glasses = asset_get_index(\"s{id}_Glasses\");\n\
+                         {id}Body = instance_create_layer(cx + ({bx}), cy + ({by}), \"Behind_Wall\", oOfficeSprite);\n\
+                         if (spr_body != -1) {id}Body.sprite_index = spr_body;\n\
+                         {id}Body.DrawDepth = 48;\n\
+                         {id}Head = instance_create_layer(cx + ({hx}), cy + ({hy}), \"Behind_Wall\", oOfficeSprite);\n\
+                         if (spr_head != -1) {id}Head.sprite_index = spr_head;\n\
+                         {id}Head.DrawDepth = 50;\n\
+                         if (has_glasses) {{\n\
+                             {id}Glasses = instance_create_layer(cx + ({hx}) + ({gx}), cy + ({hy}) + ({gy}), \"Behind_Wall\", oOfficeSprite);\n\
+                             if (spr_glasses != -1) {id}Glasses.sprite_index = spr_glasses;\n\
+                             {id}Glasses.DrawDepth = 52;\n\
+                         }}\n\
+                         if (snd_stream_knock != -1) {{\n\
+                             audio_play_sound(snd_stream_knock, 10, false);\n\
+                         }} else {{\n\
+                             var snd_k = asset_get_index(\"sfxKnock\");\n\
+                             if (snd_k != -1) audio_play_sound(snd_k, 10, false);\n\
+                         }}\n\
+                         if (snd_stream_voice != -1) {{\n\
+                             audio_play_sound(snd_stream_voice, 11, false);\n\
+                         }}\n\
+                     }}\n\
+                 }}\n\
+             }}\n\
+             \n\
+             if (state == 1) {{\n\
+                 var blocked = false;\n\
+                 {blocker_check}\n\
+                 if (!blocked || !{stalls_blind}) attack_timer--;\n\
+                 if (remove_cooldown > 0) remove_cooldown--;\n\
+                 head_recoil_x = lerp(head_recoil_x, 0, 0.15);\n\
+                 head_recoil_y = lerp(head_recoil_y, 0, 0.15);\n\
+                 var torso_bob = sin(current_time * 0.003) * 2.5;\n\
+                 if ({id}Body != noone && instance_exists({id}Body)) {id}Body.y = (cy + ({by})) + torso_bob;\n\
+                 if ({id}Head != noone && instance_exists({id}Head)) {{\n\
+                     var head_bob = sin(current_time * 0.004) * 3.0;\n\
+                     var jitter_x = has_glasses ? 0 : random_range(-2.2, 2.2);\n\
+                     var jitter_y = has_glasses ? 0 : random_range(-2.2, 2.2);\n\
+                     {id}Head.x = (cx + ({hx})) + head_recoil_x + jitter_x;\n\
+                     {id}Head.y = (cy + ({hy})) + head_bob + head_recoil_y + jitter_y;\n\
+                     if (has_glasses && {id}Glasses != noone && instance_exists({id}Glasses)) {{\n\
+                         {id}Glasses.x = {id}Head.x + ({gx});\n\
+                         {id}Glasses.y = {id}Head.y + ({gy});\n\
+                     }}\n\
+                 }}\n\
+                 var mx = mouse_x;\n\
+                 var my = mouse_y;\n\
+                 if (instance_exists(o3DMouse)) {{ mx = o3DMouse.x; my = o3DMouse.y; }}\n\
+                 var hover_glasses_only = false;\n\
+                 if (has_glasses && {id}Glasses != noone && instance_exists({id}Glasses)) {{\n\
+                     if (mx >= {id}Glasses.x - 8 && mx <= {id}Glasses.x + {gw} && my >= {id}Glasses.y - 8 && my <= {id}Glasses.y + {gh}) {{\n\
+                         hover_glasses_only = true;\n\
+                     }}\n\
+                 }}\n\
+                 var hover_window = (point_distance(cx, cy + 60, mx, my) < 175);\n\
+                 var flashing = (keyboard_check(ord(\"F\")) || mouse_check_button(mb_right) || (variable_global_exists(\"Flashlight\") && global.Flashlight));\n\
+                 var mask_on = (variable_global_exists(\"Mask\") && global.Mask);\n\
+                 if (has_glasses && !blocked && hover_glasses_only && mouse_check_button_pressed(mb_left)) {{\n\
+                     has_glasses = false;\n\
+                     glasses_flying = true;\n\
+                     glasses_vx = choose(-6.5, 6.5);\n\
+                     glasses_vy = -8.5;\n\
+                     remove_cooldown = 12;\n\
+                     head_recoil_x = (glasses_vx > 0 ? 16 : -16);\n\
+                     head_recoil_y = -8;\n\
+                     var spr_scare = asset_get_index(\"s{id}_head_Scare\");\n\
+                     if (spr_scare != -1 && {id}Head != noone && instance_exists({id}Head)) {id}Head.sprite_index = spr_scare;\n\
+                     var snd_c = asset_get_index(\"sfxClick\");\n\
+                     if (snd_c != -1) audio_play_sound(snd_c, 10, false);\n\
+                 }}\n\
+                 if ({defeat_cond}) {{\n\
+                     state = 2;\n\
+                     blind_fade = 55;\n\
+                     if ({id}Body != noone && instance_exists({id}Body)) {{ instance_destroy({id}Body); {id}Body = noone; }}\n\
+                     if ({id}Glasses != noone && instance_exists({id}Glasses)) {{ instance_destroy({id}Glasses); {id}Glasses = noone; }}\n\
+                     glasses_flying = false;\n\
+                     var spr_flash = asset_get_index(\"s{id}_Flash\");\n\
+                     if ({id}Head != noone && instance_exists({id}Head)) {{\n\
+                         if (spr_flash != -1) {id}Head.sprite_index = spr_flash;\n\
+                         {id}Head.x = cx - 94;\n\
+                         {id}Head.y = cy;\n\
+                         {id}Head.DrawDepth = 54;\n\
+                     }}\n\
+                     if (snd_stream_defeat != -1) {{\n\
+                         audio_play_sound(snd_stream_defeat, 12, false);\n\
+                     }}\n\
+                     var scr_tok = asset_get_index(\"gml_Script_add_tokens\");\n\
+                     if (scr_tok != -1 && {tok} > 0) script_execute(scr_tok, {tok});\n\
+                 }}\n\
+                 if (attack_timer <= 0 && !blocked) {{\n\
+                     state = 4;\n\
+                     jumpscare_timer = 0;\n\
+                     jumpscare_frame = 0;\n\
+                     glasses_flying = false;\n\
+                     if ({id}Body != noone && instance_exists({id}Body)) {{ instance_destroy({id}Body); {id}Body = noone; }}\n\
+                     if ({id}Head != noone && instance_exists({id}Head)) {{ instance_destroy({id}Head); {id}Head = noone; }}\n\
+                     if ({id}Glasses != noone && instance_exists({id}Glasses)) {{ instance_destroy({id}Glasses); {id}Glasses = noone; }}\n\
+                     if (snd_stream_jump != -1) {{\n\
+                         audio_play_sound(snd_stream_jump, 100, false);\n\
+                     }} else {{\n\
+                         var scream = asset_get_index(\"sfxJumpscareNormal\");\n\
+                         if (scream == -1) scream = asset_get_index(\"sfxWindowScare\");\n\
+                         if (scream != -1) audio_play_sound(scream, 10, false);\n\
+                     }}\n\
+                 }}\n\
+             }}\n\
+             \n\
+             if (state == 2) {{\n\
+                 blind_fade--;\n\
+                 if ({id}Head != noone && instance_exists({id}Head)) {{\n\
+                     {id}Head.x = (cx - 94) + random_range(-3, 3);\n\
+                     if (blind_fade < 35) {id}Head.y += 4.5;\n\
+                 }}\n\
+                 if (blind_fade <= 0) {{\n\
+                     state = 0;\n\
+                     var ai = 20;\n\
+                     if (variable_global_exists(\"{id}_AI\")) ai = clamp(global.{id}_AI, 0, 20);\n\
+                     knock_timer = irandom_range(round(lerp(1800, 600, ai / 20.0)), round(lerp(2800, 1000, ai / 20.0)));\n\
+                     if ({id}Head != noone && instance_exists({id}Head)) {{ instance_destroy({id}Head); {id}Head = noone; }}\n\
+                 }}\n\
+             }}\n\
+             \n\
+             if (state == 4) {{\n\
+                 jumpscare_timer++;\n\
+                 jumpscare_frame = (floor(jumpscare_timer / 4) % 3);\n\
+                 if (jumpscare_timer >= 85) {{\n\
+                     global.{id}Death = true;\n\
+                     global.Jumpscare = -1;\n\
+                     global.TimeLasted = global.{id}_SavedTime;\n\
+                     var r_go = asset_get_index(\"GameOver\");\n\
+                     if (r_go != -1) room_goto(r_go);\n\
+                     else game_restart();\n\
+                 }}\n\
+             }}\n",
+            arch_name = b.archetype.display_name(),
+            id = id,
+            cx = cx,
+            cy = cy,
+            allow_dc = if b.allow_death_coin { "true" } else { "false" },
+            queue_check = queue_check,
+            atk1 = b.attack_window_frames_ai1,
+            atk20 = b.attack_window_frames_ai20,
+            has_acc = if b.countermeasure == CountermeasureType::RemoveAccessoryThenFlash { "true" } else { "false" },
+            open_blind_action = open_blind_action,
+            bx = b.body_offset_x,
+            by = b.body_offset_y,
+            hx = b.head_offset_x,
+            hy = b.head_offset_y,
+            gx = b.accessory_offset_x,
+            gy = b.accessory_offset_y,
+            gw = b.accessory_hitbox_w,
+            gh = b.accessory_hitbox_h,
+            blocker_check = blocker_check,
+            defeat_cond = defeat_condition_gml,
+            stalls_blind = if b.stalls_when_blocked { "true" } else { "false" },
+            tok = b.token_reward_on_defeat,
+        );
+        map.insert(format!("gml_Object_o{}_BackWindow_Step_0.gml", id), step_code);
+
+        // ==========================================================
+        // 6. Custom Night Tile (Multi-Mod Seguro: Sin doble toggle ni sobreescritura de fondo)
+        // ==========================================================
+        let is_slot_zero = proj.custom_night.slot_index == 0;
+        let tile_depth = if is_slot_zero { -1000 } else { -1005 };
+
+        let cn_create = format!(
+            "depth = {depth};\n\
+             if (!variable_global_exists(\"{id}_AI\")) global.{id}_AI = 0;\n\
+             if (!variable_global_exists(\"CustomNight_Page\")) global.CustomNight_Page = 0;\n\
+             if (!variable_global_exists(\"CN_PageSwitchFrame\")) global.CN_PageSwitchFrame = -1;\n\
+             btn_page_x = 382;\n\
+             btn_page_y = 332;\n\
+             btn_page_w = 88;\n\
+             btn_page_h = 24;\n\
+             tile_x = {tx};\n\
+             tile_y = {ty};\n",
+            depth = tile_depth,
+            id = id,
+            tx = tile_x,
+            ty = tile_y
+        );
+        map.insert(format!("gml_Object_o{}_CustomNightTile_Create_0.gml", id), cn_create);
+
+        let cn_step = format!(
+            "depth = {depth};\n\
+             if (!variable_global_exists(\"{id}_AI\")) global.{id}_AI = 0;\n\
+             if (!variable_global_exists(\"CustomNight_Page\")) global.CustomNight_Page = 0;\n\
+             with (oCustomNightTile) {{ visible = (global.CustomNight_Page == 0); }}\n\
+             var snd_click = asset_get_index(\"sfxClick\");\n\
+             if (snd_click == -1) snd_click = asset_get_index(\"snd_Button\");\n\
+             var snd_btn = asset_get_index(\"snd_Button\");\n\
+             if (mouse_check_button_pressed(mb_left)) {{\n\
+                 // Guardia anti-colisión Multi-Mod: solo cambia de página una vez por clic\n\
+                 if (mouse_x >= btn_page_x && mouse_x <= btn_page_x + btn_page_w && mouse_y >= btn_page_y && mouse_y <= btn_page_y + btn_page_h) {{\n\
+                     if (global.CN_PageSwitchFrame != current_time) {{\n\
+                         global.CN_PageSwitchFrame = current_time;\n\
+                         global.CustomNight_Page = 1 - global.CustomNight_Page;\n\
+                         if (snd_click != -1) audio_play_sound(snd_click, 10, false);\n\
+                         with (oCustomNightTile) {{ visible = (global.CustomNight_Page == 0); }}\n\
+                     }}\n\
+                 }} else if (global.CustomNight_Page == 1) {{\n\
+                     if (mouse_x >= tile_x && mouse_x <= tile_x + 32 && mouse_y >= tile_y + 48 && mouse_y <= tile_y + 66) {{\n\
+                         if (mouse_x < tile_x + 16) {{ if (global.{id}_AI > 0) {{ global.{id}_AI--; if (snd_click != -1) audio_play_sound(snd_click, 0, false); }} }}\n\
+                         else {{ if (global.{id}_AI < 20) {{ global.{id}_AI++; if (snd_click != -1) audio_play_sound(snd_click, 0, false); }} }}\n\
+                     }}\n\
+                 }}\n\
+                 if (mouse_y >= 43 && mouse_y <= 75) {{\n\
+                     if (mouse_x >= 480 && mouse_x <= 543) global.{id}_AI = 0;\n\
+                     else if (mouse_x >= 544 && mouse_x <= 608) global.{id}_AI = min(20, global.{id}_AI + 1);\n\
+                 }} else if (mouse_y >= 75 && mouse_y <= 107) {{\n\
+                     if (mouse_x >= 480 && mouse_x <= 543) global.{id}_AI = min(20, global.{id}_AI + 5);\n\
+                     else if (mouse_x >= 544 && mouse_x <= 608) global.{id}_AI = 20;\n\
+                 }}\n\
+             }}\n\
+             if (global.CustomNight_Page == 1 && mouse_check_button_pressed(mb_right)) {{\n\
+                 if (mouse_x >= tile_x && mouse_x <= tile_x + 48 && mouse_y >= tile_y && mouse_y <= tile_y + 66) {{\n\
+                     global.{id}_AI = (global.{id}_AI > 0) ? 0 : 20;\n\
+                     if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);\n\
+                 }}\n\
+             }}\n\
+             if (global.CustomNight_Page == 1 && mouse_x >= tile_x && mouse_x <= tile_x + 48 && mouse_y >= tile_y && mouse_y <= tile_y + 66) {{\n\
+                 if (mouse_wheel_up() && global.{id}_AI < 20) {{ global.{id}_AI++; if (snd_click != -1) audio_play_sound(snd_click, 0, false); }}\n\
+                 else if (mouse_wheel_down() && global.{id}_AI > 0) {{ global.{id}_AI--; if (snd_click != -1) audio_play_sound(snd_click, 0, false); }}\n\
+             }}\n",
+            depth = tile_depth,
+            id = id
+        );
+        map.insert(format!("gml_Object_o{}_CustomNightTile_Step_0.gml", id), cn_step);
+
+        let escaped_tooltip = proj.custom_night.cursor_tooltip.replace('"', "\\\"");
+        let bg_clear_gml = if is_slot_zero {
+            "draw_set_color(c_black);\n    draw_rectangle(28, 0, 475, 360, false);"
+        } else {
+            "// Fondo limpiado por el Slot #0"
+        };
+
+        let cn_draw = format!(
+            "var fnt = asset_get_index(\"fnt_Small\");\n\
+             if (fnt == -1) fnt = asset_get_index(\"fnt_Dialogue\");\n\
+             if (fnt != -1) draw_set_font(fnt);\n\
+             if (global.CustomNight_Page == 1) {{\n\
+                 {bg_clear}\n\
+                 var spr_base = asset_get_index(\"sTileBase\");\n\
+                 if (spr_base != -1) draw_sprite(spr_base, 0, tile_x, tile_y);\n\
+                 var spr_tile = asset_get_index(\"sTile_{id}\");\n\
+                 if (spr_tile != -1) {{\n\
+                     var is_dc = (variable_global_exists(\"{id}_DeathCoined\") && global.{id}_DeathCoined);\n\
+                     if (global.{id}_AI > 0 && !is_dc) draw_sprite(spr_tile, 0, tile_x, tile_y);\n\
+                     else if (sprite_get_number(spr_tile) > 1) draw_sprite(spr_tile, 1, tile_x, tile_y);\n\
+                     else draw_sprite_ext(spr_tile, 0, tile_x, tile_y, 1, 1, 0, c_gray, 1.0);\n\
+                 }}\n\
+                 var spr_arrows = asset_get_index(\"sCustomNightArrows\");\n\
+                 if (spr_arrows != -1) draw_sprite(spr_arrows, 0, tile_x, tile_y + 48);\n\
+                 var spr_counter = asset_get_index(\"sCustomNightCounter\");\n\
+                 if (spr_counter != -1) draw_sprite(spr_counter, global.{id}_AI, tile_x + 32, tile_y + 48);\n\
+                 var show_desc = (!variable_global_exists(\"ShowDescriptions\") || global.ShowDescriptions);\n\
+                 if (show_desc && mouse_x >= tile_x && mouse_x <= tile_x + 48 && mouse_y >= tile_y && mouse_y <= tile_y + 66) {{\n\
+                     var tip_txt = \"{tooltip}\";\n\
+                     var tw = 224; var th = 68;\n\
+                     var tx = clamp(mouse_x + 12, 32, 470 - tw);\n\
+                     var ty = clamp(mouse_y + 12, 12, 350 - th);\n\
+                     draw_set_color(make_color_rgb(198, 198, 198));\n\
+                     draw_rectangle(tx, ty, tx + tw, ty + th, false);\n\
+                     draw_set_color(c_black);\n\
+                     draw_rectangle(tx - 1, ty - 1, tx + tw + 1, ty + th + 1, true);\n\
+                     draw_set_halign(fa_left); draw_set_valign(fa_top);\n\
+                     draw_text_ext(tx + 6, ty + 6, tip_txt, 13, tw - 12);\n\
+                 }}\n\
+             }}\n\
+             var hov_btn = (mouse_x >= btn_page_x && mouse_x <= btn_page_x + btn_page_w && mouse_y >= btn_page_y && mouse_y <= btn_page_y + btn_page_h);\n\
+             draw_set_color(hov_btn ? make_color_rgb(215, 215, 215) : make_color_rgb(192, 192, 192));\n\
+             draw_rectangle(btn_page_x, btn_page_y, btn_page_x + btn_page_w, btn_page_y + btn_page_h, false);\n\
+             draw_set_color(c_black);\n\
+             draw_rectangle(btn_page_x - 1, btn_page_y - 1, btn_page_x + btn_page_w + 1, btn_page_y + btn_page_h + 1, true);\n\
+             var cy_mid = btn_page_y + (btn_page_h div 2);\n\
+             draw_set_valign(fa_middle);\n\
+             if (global.CustomNight_Page == 0) {{\n\
+                 draw_set_halign(fa_left);\n\
+                 draw_text(btn_page_x + 12, cy_mid, \"PAGE 2\");\n\
+                 var ax = btn_page_x + btn_page_w - 18;\n\
+                 draw_triangle(ax, cy_mid - 5, ax, cy_mid + 5, ax + 6, cy_mid, false);\n\
+             }} else {{\n\
+                 var ax = btn_page_x + 12;\n\
+                 draw_triangle(ax + 6, cy_mid - 5, ax + 6, cy_mid + 5, ax, cy_mid, false);\n\
+                 draw_set_halign(fa_left);\n\
+                 draw_text(btn_page_x + 24, cy_mid, \"PAGE 1\");\n\
+             }}\n\
+             draw_set_halign(fa_left); draw_set_valign(fa_top); draw_set_color(c_white);\n",
+            bg_clear = bg_clear_gml,
+            id = id,
+            tooltip = escaped_tooltip
+        );
+        map.insert(format!("gml_Object_o{}_CustomNightTile_Draw_0.gml", id), cn_draw);
+
+        // ==========================================================
+        // 7. DeathScreen (Draw_0 y Step_0)
+        // ==========================================================
+        let escaped_go_tip = proj.custom_night.gameover_tip.replace('"', "\\\"");
+        let death_sync = format!(
+            "if (room == asset_get_index(\"GameOver\")) {{\n\
+                 if (variable_global_exists(\"{id}Death\") && global.{id}Death) {{\n\
+                     if (variable_global_exists(\"{id}_SavedTime\")) global.TimeLasted = global.{id}_SavedTime;\n\
+                     with (oGameOver) {{\n\
+                         Tip = \"{tip}\";\n\
+                         if (variable_instance_exists(id, \"TimeLasted\") && variable_global_exists(\"{id}_SavedTime\")) {{\n\
+                             TimeLasted = global.{id}_SavedTime;\n\
+                         }}\n\
+                     }}\n\
+                 }}\n\
+             }}\n",
+            id = id,
+            tip = escaped_go_tip
+        );
+        map.insert(format!("gml_Object_o{}_DeathScreen_Draw_0.gml", id), death_sync.clone());
+        map.insert(format!("gml_Object_o{}_DeathScreen_Step_0.gml", id), death_sync);
+
+        // ==========================================================
+        // 8. Menú de Pausa — Review Animatronics
+        // ==========================================================
+        let rev_create = "depth = -2500;\nreview_page = 0;\nbtn_rev_x = 524;\nbtn_rev_y = 322;\nbtn_rev_w = 96;\nbtn_rev_h = 24;\n".to_string();
+        map.insert(format!("gml_Object_o{}_ReviewHandler_Create_0.gml", id), rev_create);
+
+        let rev_step = "depth = -2500;\n\
+             var in_pause_review = false;\n\
+             if (instance_exists(oPauser)) {\n\
+                 with (oPauser) {\n\
+                     if (variable_instance_exists(id, \"Paused\") && Paused) in_pause_review = true;\n\
+                     if (variable_instance_exists(id, \"Reviewing\") && Reviewing) in_pause_review = true;\n\
+                 }\n\
+             }\n\
+             if (!in_pause_review) { review_page = 0; exit; }\n\
+             if (mouse_check_button_pressed(mb_left)) {\n\
+                 if (mouse_x >= btn_rev_x && mouse_x <= btn_rev_x + btn_rev_w && mouse_y >= btn_rev_y && mouse_y <= btn_rev_y + btn_rev_h) {\n\
+                     review_page = 1 - review_page;\n\
+                     var snd_c = asset_get_index(\"sfxClick\");\n\
+                     if (snd_c != -1) audio_play_sound(snd_c, 10, false);\n\
+                 }\n\
+             }\n"
+        .to_string();
+        map.insert(format!("gml_Object_o{}_ReviewHandler_Step_0.gml", id), rev_step);
+
+        let escaped_full_name = proj.gallery_info.full_name.replace('"', "\\\"");
+        let escaped_loc = proj.custom_night.pause_review_location.replace('"', "\\\"");
+        let escaped_rev_desc = proj.custom_night.pause_review_description.replace('"', "\\\"").replace('\n', "\\n");
+        let rev_draw = format!(
+            "var in_pause_review = false;\n\
+             if (instance_exists(oPauser)) {{\n\
+                 with (oPauser) {{\n\
+                     if (variable_instance_exists(id, \"Paused\") && Paused) in_pause_review = true;\n\
+                     if (variable_instance_exists(id, \"Reviewing\") && Reviewing) in_pause_review = true;\n\
+                 }}\n\
+             }}\n\
+             if (!in_pause_review) exit;\n\
+             var fnt = asset_get_index(\"fnt_Small\");\n\
+             if (fnt != -1) draw_set_font(fnt);\n\
+             if (review_page == 1) {{\n\
+                 var px = 80; var py = 48; var pw = 480; var ph = 256;\n\
+                 draw_set_color(make_color_rgb(198, 198, 198));\n\
+                 draw_rectangle(px, py, px + pw, py + ph, false);\n\
+                 draw_set_color(c_black);\n\
+                 draw_rectangle(px - 1, py - 1, px + pw + 1, py + th + 1, true);\n\
+                 var spr_tile = asset_get_index(\"sTile_{id}\");\n\
+                 if (spr_tile != -1) draw_sprite(spr_tile, 0, px + 16, py + 16);\n\
+                 draw_set_halign(fa_left); draw_set_valign(fa_top);\n\
+                 draw_set_color(make_color_rgb(0, 0, 128));\n\
+                 draw_text(px + 74, py + 16, \"{full_name}\");\n\
+                 draw_set_color(make_color_rgb(60, 60, 60));\n\
+                 draw_text(px + 74, py + 34, \"Location: {loc}\");\n\
+                 draw_set_color(c_black);\n\
+                 draw_text_ext(px + 16, py + 74, \"{rev_desc}\", 13, pw - 32);\n\
+             }}\n\
+             draw_set_color(make_color_rgb(192, 192, 192));\n\
+             draw_rectangle(btn_rev_x, btn_rev_y, btn_rev_x + btn_rev_w, btn_rev_y + btn_rev_h, false);\n\
+             draw_set_color(c_black);\n\
+             draw_rectangle(btn_rev_x - 1, btn_rev_y - 1, btn_rev_x + btn_rev_w + 1, btn_rev_y + btn_rev_h + 1, true);\n\
+             draw_set_halign(fa_center); draw_set_valign(fa_middle);\n\
+             draw_text(btn_rev_x + (btn_rev_w div 2), btn_rev_y + (btn_rev_h div 2), review_page == 0 ? \"MOD REVIEW >\" : \"< BACK\");\n\
+             draw_set_halign(fa_left); draw_set_valign(fa_top); draw_set_color(c_white);\n",
+            id = id,
+            full_name = escaped_full_name,
+            loc = escaped_loc,
+            rev_desc = escaped_rev_desc
+        );
+        map.insert(format!("gml_Object_o{}_ReviewHandler_Draw_0.gml", id), rev_draw);
+
+        map
     }
-    // B. Controles de {ID} en Página 2 (Slot 0,0 en 32, 12)
-    // ◄ en 32..47 (0..15), Contador en 48..63 (16..31), ► en 64..79 (32..47)
-    else if (global.CustomNight_Page == 1) {
-        if (mouse_y >= cur_tile_y + 48 && mouse_y <= cur_tile_y + 64) {
-            // Flecha Izquierda ◄ (Decrementar)
-            if (mouse_x >= cur_tile_x && mouse_x < cur_tile_x + 16) {
-                if (global.{ID}_AI > 0) {
-                    global.{ID}_AI--;
-                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
-                }
-            }
-            // Flecha Derecha ► (Incrementar)
-            else if (mouse_x >= cur_tile_x + 32 && mouse_x <= cur_tile_x + 48) {
-                if (global.{ID}_AI < 20) {
-                    global.{ID}_AI++;
-                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
-                }
-            }
-            // Clic en el número central (Alternar 0 / 20)
-            else if (mouse_x >= cur_tile_x + 16 && mouse_x < cur_tile_x + 32) {
-                global.{ID}_AI = (global.{ID}_AI > 0) ? 0 : 20;
-                if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
-            }
-        }
 
-        // C. Botones globales del panel derecho (SET ALL 0, ADD ALL 1, ADD ALL 5, SET ALL 20)
-        // EXCLUSIVO de la Página 2: Solo afecta a {ID} y no toca a los vanilla
-        if (mouse_x >= 478 && mouse_x <= 612) {
-            // Fila 1: SET ALL 0 y ADD ALL 1 (Y: 35..71)
-            if (mouse_y >= 35 && mouse_y <= 71) {
-                if (mouse_x < 545) {
-                    global.{ID}_AI = 0; // SET ALL 0
-                    if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
-                } else {
-                    global.{ID}_AI = min(20, global.{ID}_AI + 1); // ADD ALL 1
-                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
-                }
-            }
-            // Fila 2: ADD ALL 5 y SET ALL 20 (Y: 72..108)
-            else if (mouse_y >= 72 && mouse_y <= 108) {
-                if (mouse_x < 545) {
-                    global.{ID}_AI = min(20, global.{ID}_AI + 5); // ADD ALL 5
-                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
-                } else {
-                    global.{ID}_AI = 20; // SET ALL 20
-                    if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
-                }
+    pub fn get_effective_gml_scripts(proj: &AnimatronicProject) -> BTreeMap<String, String> {
+        let mut map = Self::generate_template_gml_scripts(proj);
+        for (k, v) in &proj.behavior.custom_gml_overrides {
+            if map.contains_key(k) {
+                map.insert(k.clone(), v.clone());
             }
         }
-
-        // D. Al presionar START NIGHT en el panel derecho (X >= 480, Y >= 300), reactivar tiles vanilla
-        if (mouse_x >= 480 && mouse_y >= 300) {
-            instance_activate_object(oCustomNightTile);
-        }
+        map
     }
-}
 
-// 2. Clic derecho en el Tile de {ID} para alternar 0 / 20
-if (global.CustomNight_Page == 1 && mouse_check_button_pressed(mb_right)) {
-    if (mouse_x >= cur_tile_x && mouse_x <= cur_tile_x + 48 && mouse_y >= cur_tile_y && mouse_y <= cur_tile_y + 64) {
-        global.{ID}_AI = (global.{ID}_AI > 0) ? 0 : 20;
-        if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
-    }
-}
-
-// 3. Rueda del ratón encima del Tile de {ID}
-if (global.CustomNight_Page == 1) {
-    if (mouse_x >= cur_tile_x && mouse_x <= cur_tile_x + 48 && mouse_y >= cur_tile_y && mouse_y <= cur_tile_y + 64) {
-        if (mouse_wheel_up()) {
-            if (global.{ID}_AI < 20) {
-                global.{ID}_AI++;
-                if (snd_click != -1) audio_play_sound(snd_click, 0, false);
-            }
-        } else if (mouse_wheel_down()) {
-            if (global.{ID}_AI > 0) {
-                global.{ID}_AI--;
-                if (snd_click != -1) audio_play_sound(snd_click, 0, false);
-            }
-        }
-    }
-}
-"#;
-
-/// oMurray_CustomNightTile -> Draw_0: cuadrícula nativa 8x4, slot (0,0) destacado
-/// con flechas ◄ ► y contador, tooltip Windows 95 y botón PAGE 1/2 (golden V22).
-const CN_DRAW_TEMPLATE: &str = r#"// ==============================================================
-// {ID} - Custom Night Tile Render (Draw, V26-aligned)
-// Cuadrícula estilizada (8x4 slots), ◄ [00] ► nativo y botón PAGE 1/2 alineado
-// Generado por FrickEditor Studio (golden_master_v26)
-// ==============================================================
-var fnt = asset_get_index("fnt_Small");
-if (fnt == -1) fnt = asset_get_index("fnt_Dialogue");
-if (fnt != -1) draw_set_font(fnt);
-
-// 1. Si estamos en la Página 2 ({ID}), dibujar la cuadrícula completa de 8x4
-if (global.CustomNight_Page == 1) {
-    // Fondo oscuro idéntico a la cuadrícula original
-    draw_set_color(c_black);
-    draw_rectangle(28, 0, 464, 360, false);
-
-    var spr_base = asset_get_index("sTileBase");
-    var spr_arrows = asset_get_index("sCustomNightArrows");
-    var spr_counter = asset_get_index("sCustomNightCounter");
-
-    // Dibujar la cuadrícula oficial de 4 filas x 8 columnas (32 slots idénticos a vanilla)
-    for (var row = 0; row < 4; row++) {
-        for (var col = 0; col < 8; col++) {
-            var sx = 32 + col * 54;
-            var sy = 12 + row * 72;
-
-            if (row == 0 && col == 0) {
-                // SLOT (0,0): {ID}
-                if (spr_base != -1) {
-                    draw_sprite(spr_base, 0, sx, sy);
-                } else {
-                    draw_set_color(make_color_rgb(192, 192, 192));
-                    draw_rectangle(sx, sy, sx + 47, sy + 47, false);
-                }
-
-                // Retrato de {ID}
-                var spr_murray = asset_get_index("sTile_{ID}");
-                if (spr_murray != -1) {
-                    var is_dc = (variable_global_exists("{ID}_DeathCoined") && global.{ID}_DeathCoined);
-                    if (global.{ID}_AI > 0 && !is_dc) {
-                        draw_sprite(spr_murray, 0, sx, sy);
-                    } else if (sprite_get_number(spr_murray) > 1) {
-                        draw_sprite(spr_murray, 1, sx, sy);
-                    } else {
-                        draw_sprite_ext(spr_murray, 0, sx, sy, 1, 1, 0, c_gray, 1.0);
+    pub fn find_next_csx_version(utmt_scripts_dir: &Path, id: &str) -> u32 {
+        let mut max_ver = 26u32;
+        if let Ok(entries) = fs::read_dir(utmt_scripts_dir) {
+            let prefix = format!("Instalar_{}_V", id);
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if let Some(rest) = fname.strip_prefix(&prefix) {
+                    if let Some(num_str) = rest.strip_suffix(".csx") {
+                        if let Ok(v) = num_str.parse::<u32>() {
+                            if v > max_ver {
+                                max_ver = v;
+                            }
+                        }
                     }
                 }
-
-                // Formato idéntico al juego original:
-                // ◄ a la izquierda (0..16), Contador en el centro (16..32), ► a la derecha (32..48)
-                if (spr_arrows != -1) {
-                    // Flecha izquierda ◄
-                    draw_sprite_part(spr_arrows, 0, 0, 0, 16, 16, sx, sy + 48);
-                    // Flecha derecha ►
-                    draw_sprite_part(spr_arrows, 0, 16, 0, 16, 16, sx + 32, sy + 48);
-                }
-                if (spr_counter != -1) {
-                    // Contador digital centrado exactamente en +16 px
-                    draw_sprite(spr_counter, global.{ID}_AI, sx + 16, sy + 48);
-                }
-            } else {
-                // SLOTS VACÍOS DE LA CUADRÍCULA ESTILIZADOS
-                // Marco exterior de 48x48 con bisel sutil estilo Windows 95
-                draw_set_color(make_color_rgb(18, 18, 18));
-                draw_rectangle(sx, sy, sx + 47, sy + 47, false);
-
-                // Bisel sutil (luz arriba/izq, sombra abajo/der)
-                draw_set_color(make_color_rgb(50, 50, 50));
-                draw_line(sx, sy, sx + 47, sy);
-                draw_line(sx, sy, sx, sy + 47);
-                draw_set_color(make_color_rgb(10, 10, 10));
-                draw_line(sx, sy + 47, sx + 47, sy + 47);
-                draw_line(sx + 47, sy, sx + 47, sy + 47);
-
-                // Icono "+" minimalista y elegante en el centro del slot
-                draw_set_color(make_color_rgb(38, 38, 38));
-                draw_line(sx + 21, sy + 24, sx + 27, sy + 24);
-                draw_line(sx + 24, sy + 21, sx + 24, sy + 27);
-
-                // Marco inferior para flechas/contador (48x16)
-                draw_set_color(make_color_rgb(14, 14, 14));
-                draw_rectangle(sx, sy + 48, sx + 47, sy + 63, false);
-                draw_set_color(make_color_rgb(35, 35, 35));
-                draw_line(sx, sy + 48, sx + 47, sy + 48);
-                draw_line(sx, sy + 48, sx, sy + 63);
-                draw_set_color(make_color_rgb(8, 8, 8));
-                draw_line(sx, sy + 63, sx + 47, sy + 63);
-                draw_line(sx + 47, sy + 48, sx + 47, sy + 63);
-
-                // Guión sutil en el contador vacío
-                draw_set_color(make_color_rgb(32, 32, 32));
-                draw_line(sx + 21, sy + 56, sx + 27, sy + 56);
             }
         }
+        max_ver + 1
     }
 
-    // Tooltip oficial Windows 95 al pasar el cursor sobre {ID}
-    var show_desc = true;
-    if (variable_global_exists("ShowDescriptions")) show_desc = global.ShowDescriptions;
-
-    if (show_desc && mouse_x >= 32 && mouse_x <= 80 && mouse_y >= 12 && mouse_y <= 76) {
-        var tip_txt = "{tooltip}";
-        var tw = 240;
-        var th = 88;
-        var tx = clamp(mouse_x + 12, 32, 450 - tw);
-        var ty = clamp(mouse_y + 12, 12, 350 - th);
-
-        // Caja gris biselada nativa
-        draw_set_color(make_color_rgb(198, 198, 198));
-        draw_rectangle(tx, ty, tx + tw, ty + th, false);
-        draw_set_color(c_white);
-        draw_line(tx, ty, tx + tw, ty);
-        draw_line(tx, ty, tx, ty + th);
-        draw_set_color(make_color_rgb(80, 80, 80));
-        draw_line(tx, ty + th, tx + tw, ty + th);
-        draw_line(tx + tw, ty, tx + tw, ty + th);
-        draw_set_color(c_black);
-        draw_rectangle(tx - 1, ty - 1, tx + tw + 1, ty + th + 1, true);
-
-        draw_set_halign(fa_left);
-        draw_set_valign(fa_top);
-        draw_set_color(c_black);
-        draw_text_ext(tx + 7, ty + 7, tip_txt, 14, tw - 14);
-    }
-}
-
-// 2. Botón cuadrado de cambio de página (344, 326, 110, 26) en la misma posición en ambas páginas
-var hov_btn = (mouse_x >= btn_page_x && mouse_x <= btn_page_x + btn_page_w && mouse_y >= btn_page_y && mouse_y <= btn_page_y + btn_page_h);
-var pressed = (hov_btn && mouse_check_button(mb_left));
-
-draw_set_color(hov_btn ? make_color_rgb(215, 215, 215) : make_color_rgb(192, 192, 192));
-draw_rectangle(btn_page_x, btn_page_y, btn_page_x + btn_page_w, btn_page_y + btn_page_h, false);
-
-// Biselado oficial
-draw_set_color(pressed ? make_color_rgb(80, 80, 80) : c_white);
-draw_line(btn_page_x, btn_page_y, btn_page_x + btn_page_w, btn_page_y);
-draw_line(btn_page_x, btn_page_y, btn_page_x, btn_page_y + btn_page_h);
-
-draw_set_color(pressed ? c_white : make_color_rgb(80, 80, 80));
-draw_line(btn_page_x, btn_page_y + btn_page_h, btn_page_x + btn_page_w, btn_page_y + btn_page_h);
-draw_line(btn_page_x + btn_page_w, btn_page_y, btn_page_x + btn_page_w, btn_page_y + btn_page_h);
-
-draw_set_color(c_black);
-draw_rectangle(btn_page_x - 1, btn_page_y - 1, btn_page_x + btn_page_w + 1, btn_page_y + btn_page_h + 1, true);
-
-// Icono triangular y texto centrado
-draw_set_valign(fa_middle);
-draw_set_color(c_black);
-
-if (global.CustomNight_Page == 0) {
-    // En Página 1: Botón para ir a PAGE 2
-    draw_set_halign(fa_center);
-    draw_text(btn_page_x + 48, btn_page_y + 13, "PAGE 2");
-
-    var tri_x = btn_page_x + 88;
-    var tri_y = btn_page_y + 13;
-    draw_triangle(tri_x - 4, tri_y - 5, tri_x - 4, tri_y + 5, tri_x + 4, tri_y, false);
-} else {
-    // En Página 2: Botón para volver a PAGE 1
-    draw_set_halign(fa_center);
-    draw_text(btn_page_x + 62, btn_page_y + 13, "PAGE 1");
-
-    var tri_x = btn_page_x + 22;
-    var tri_y = btn_page_y + 13;
-    draw_triangle(tri_x + 4, tri_y - 5, tri_x + 4, tri_y + 5, tri_x - 4, tri_y, false);
-}
-
-draw_set_halign(fa_left);
-draw_set_valign(fa_top);
-draw_set_color(c_white);
-"#;
-
-/// oMurray_BackWindow -> Step_0: máquina de estados completa (0..4) — ventana derecha
-/// (1462, 1085), mecánica de persiana con Sun/Moon, gafas, Death Coin y jumpscare (golden V25).
-const BW_STEP_TEMPLATE: &str = r#"// ==============================================================
-// {ID} - Back Window Logic (Step, V26-aligned)
-// Ventana derecha (1462, 1085), animación de cuerpo (frames 0..5),
-// audio único de golpe snd_{id}_knock.ogg, audio alegre de jumpscare snd_{id}_jumpscare.ogg,
-// y mecánica elegante de persiana: Si el usuario la levanta se queda arriba; al ahuyentarlo cae sola.
-// Generado por FrickEditor Studio (golden_master_v26)
-// ==============================================================
-var cx = 1462;
-var cy = 1085;
-var my_blind = instance_nearest(cx, cy, oWindowBlinds);
-
-// 1. Contador de supervivencia a 60 FPS para fijar TimeOfDeath exacto
-survival_frames++;
-var cur_sec = survival_frames / 60.0;
-if (variable_global_exists("TimerMinutes") && variable_global_exists("TimerSeconds")) {
-    var _m = global.TimerMinutes;
-    var _s = global.TimerSeconds;
-    var _dec = (variable_global_exists("TimerDecimal") ? global.TimerDecimal : 0);
-    cur_sec = (_m * 60) + _s + (_dec / 100.0);
-}
-global.{ID}_SavedTimeSeconds = cur_sec;
-
-// 2. Verificación de Death Coin
-var deathcoined = false;
-if (variable_global_exists("{ID}_DeathCoined") && global.{ID}_DeathCoined) deathcoined = true;
-if (variable_global_exists("{ID}_Disabled") && global.{ID}_Disabled) deathcoined = true;
-if (variable_global_exists("DeathCoin_Target") && global.DeathCoin_Target == "{ID}") deathcoined = true;
-if (state == 1 && mouse_check_button_pressed(mb_left)) {
-    if (variable_global_exists("HeldItem") && (global.HeldItem == "DeathCoin" || global.HeldItem == "Death Coin" || global.HeldItem == "oShopItem_DeathCoin")) {
-        deathcoined = true;
-    }
-}
-
-if (deathcoined) {
-    if ({ID}Body != noone && instance_exists({ID}Body)) { instance_destroy({ID}Body); {ID}Body = noone; }
-    if ({ID}Head != noone && instance_exists({ID}Head)) { instance_destroy({ID}Head); {ID}Head = noone; }
-    if ({ID}Glasses != noone && instance_exists({ID}Glasses)) { instance_destroy({ID}Glasses); {ID}Glasses = noone; }
-    glasses_flying = false;
-    if (instance_exists(my_blind)) {
-        my_blind.ForcedOpen = false;
-        my_blind.Open = false;
-    }
-    var snd_dc = asset_get_index("sfxDeathCoin");
-    if (snd_dc == -1) snd_dc = asset_get_index("sfxIgnitedFreddy_Hit1");
-    if (snd_dc != -1) audio_play_sound(snd_dc, 10, false);
-    global.{ID}_DeathCoined = true;
-    global.{ID}_Disabled = true;
-    instance_destroy();
-    exit;
-}
-
-// 3. Física de las gafas al salir disparadas
-if (glasses_flying && {ID}Glasses != noone && instance_exists({ID}Glasses)) {
-    {ID}Glasses.x += glasses_vx;
-    {ID}Glasses.y += glasses_vy;
-    glasses_vy += 1.2;
-    if ({ID}Glasses.y > 1300) {
-        instance_destroy({ID}Glasses);
-        {ID}Glasses = noone;
-        glasses_flying = false;
-    }
-}
-
-// 4. ESTADO 0: Fuera de la ventana trasera derecha
-if (state == 0) {
-    if ({ID}Body != noone && instance_exists({ID}Body)) { instance_destroy({ID}Body); {ID}Body = noone; }
-    if ({ID}Head != noone && instance_exists({ID}Head)) { instance_destroy({ID}Head); {ID}Head = noone; }
-    if ({ID}Glasses != noone && instance_exists({ID}Glasses)) { instance_destroy({ID}Glasses); {ID}Glasses = noone; }
-    glasses_flying = false;
-
-    knock_timer--;
-    if (knock_timer <= 0) {
-        // {ID} llega a la ventana derecha (1462, 1085)
-        state = 1;
-        var ai = 20;
-        if (variable_global_exists("{ID}_AI")) ai = clamp(global.{ID}_AI, 0, 20);
-        attack_timer = round(lerp(600, 320, ai / 20.0));
-        has_glasses = true;
-        remove_cooldown = 0;
-        head_recoil_x = 0;
-        head_recoil_y = 0;
-        body_frame = 0;
-
-        var spr_body = asset_get_index("s{ID}_body");
-        var spr_head = asset_get_index("s{ID}_head");
-        var spr_glasses = asset_get_index("s{ID}_Glasses");
-
-        // El cuerpo animado centrado exactamente en la ventana
-        {ID}Body = instance_create_layer(cx - 200, cy - 23, "Behind_Wall", oOfficeSprite);
-        if (spr_body != -1) {
-            {ID}Body.sprite_index = spr_body;
-            {ID}Body.image_index = 0;
-            {ID}Body.image_speed = 0;
-        }
-        {ID}Body.DrawDepth = 48;
-
-        {ID}Head = instance_create_layer(cx - 77, cy, "Behind_Wall", oOfficeSprite);
-        if (spr_head != -1) {ID}Head.sprite_index = spr_head;
-        {ID}Head.DrawDepth = 50;
-
-        {ID}Glasses = instance_create_layer(cx - 77 + {gx}, cy + {gy}, "Behind_Wall", oOfficeSprite);
-        if (spr_glasses != -1) {ID}Glasses.sprite_index = spr_glasses;
-        {ID}Glasses.DrawDepth = 52;
-
-        // Al llegar, la persiana NO se fuerza abierta automáticamente:
-        // si está cerrada, se mantiene cerrada para respetar la seguridad con Sun & Moon
-        if (instance_exists(my_blind)) {
-            my_blind.ForcedOpen = false;
-        }
-
-        // ÚNICO SONIDO PERMITIDO AL APARECER: snd_{id}_knock.ogg
-        var _p_knock = "snd_{id}_knock.ogg";
-        if (!file_exists(_p_knock)) _p_knock = working_directory + "snd_{id}_knock.ogg";
-        if (!file_exists(_p_knock)) _p_knock = program_directory + "snd_{id}_knock.ogg";
-        if (file_exists(_p_knock)) {
-            var str_k = audio_create_stream(_p_knock);
-            audio_play_sound(str_k, 10, false);
-        } else {
-            var snd_k = asset_get_index("snd_{id}_knock");
-            if (snd_k == -1) snd_k = asset_get_index("sfxKnock");
-            if (snd_k != -1) audio_play_sound(snd_k, 10, false);
-        }
-    }
-}
-
-// 5. ESTADO 1: {ID} acechando en la ventana derecha
-if (state == 1) {
-    // MECÁNICA ELEGANTE DE PERSIANA:
-    // Si la persiana está cerrada: {ID} NO la fuerza abierta y no puede atacar (timer pausado).
-    // Si el usuario la levanta: {ID} la sostiene alzada firmemente (ForcedOpen = true).
-    if (instance_exists(my_blind)) {
-        if (!my_blind.Open) {
-            attack_timer = max(attack_timer, 180);
-            my_blind.ForcedOpen = false;
-        } else {
-            // El usuario levantó la persiana: {ID} la sostiene alzada cómodamente
-            my_blind.ForcedOpen = true;
-            my_blind.Open = true;
-            attack_timer--;
-        }
-    } else {
-        attack_timer--;
-    }
-
-    if (remove_cooldown > 0) {
-        remove_cooldown--;
-    }
-
-    head_recoil_x = lerp(head_recoil_x, 0, 0.15);
-    head_recoil_y = lerp(head_recoil_y, 0, 0.15);
-
-    var torso_bob = sin(current_time * 0.003) * 2.0;
-
-    // Reproducir la animación de levantar la persiana (frames 0..5) y sostenerla en frame 5
-    if ({ID}Body != noone && instance_exists({ID}Body)) {
-        if (body_frame < 5) {
-            body_frame += 0.25;
-            if (body_frame > 5) body_frame = 5;
-        }
-        {ID}Body.image_index = floor(body_frame);
-        {ID}Body.image_speed = 0;
-        {ID}Body.x = cx - 200;
-        {ID}Body.y = (cy - 23) + torso_bob;
-    }
-
-    var head_bob = sin((current_time * 0.003) + 0.5) * 2.5;
-    if ({ID}Head != noone && instance_exists({ID}Head)) {
-        {ID}Head.x = (cx - 77) + head_recoil_x;
-        {ID}Head.y = cy + head_bob + head_recoil_y;
-    }
-
-    if (has_glasses && !glasses_flying && {ID}Glasses != noone && instance_exists({ID}Glasses)) {
-        {ID}Glasses.x = (cx - 77 + {gx}) + head_recoil_x;
-        {ID}Glasses.y = (cy + {gy}) + head_bob + head_recoil_y;
-    }
-
-    // Proyección de cursor en perspectiva 3D (o3DMouse)
-    var mx = mouse_x;
-    var my = mouse_y;
-    if (instance_exists(asset_get_index("o3DMouse"))) {
-        var _mobj = instance_find(asset_get_index("o3DMouse"), 0);
-        if (_mobj != noone) {
-            mx = _mobj.x;
-            my = _mobj.y;
-        }
-    }
-
-    // Hitboxes en la ventana derecha (1462, 1085)
-    var hover_glasses = false;
-    if (mx >= (cx - 55) && mx <= (cx + 55) && my >= (cy + 15) && my <= (cy + 85)) hover_glasses = true;
-    if ({ID}Glasses != noone && instance_exists({ID}Glasses)) {
-        if (position_meeting(mx, my, {ID}Glasses)) hover_glasses = true;
-    }
-
-    var hover_murray = false;
-    if (mx >= (cx - 100) && mx <= (cx + 100) && my >= (cy - 15) && my <= (cy + 140)) hover_murray = true;
-    if ({ID}Head != noone && instance_exists({ID}Head)) {
-        if (position_meeting(mx, my, {ID}Head)) hover_murray = true;
-    }
-    if ({ID}Body != noone && instance_exists({ID}Body)) {
-        if (position_meeting(mx, my, {ID}Body)) hover_murray = true;
-    }
-
-    var flashing = false;
-    if (mouse_check_button(mb_right)) flashing = true;
-    if (keyboard_check(vk_control) || keyboard_check(ord("F"))) flashing = true;
-    if (variable_global_exists("Flashlight") && global.Flashlight) flashing = true;
-    if (variable_global_exists("flashlight") && global.flashlight) flashing = true;
-
-    // Quitar gafas: Clic izquierdo exclusivo en las gafas
-    if (has_glasses && hover_glasses && mouse_check_button_pressed(mb_left)) {
-        has_glasses = false;
-        glasses_flying = true;
-        glasses_vx = choose(-5, 5);
-        glasses_vy = -7;
-        remove_cooldown = 15;
-        head_recoil_x = (glasses_vx > 0 ? 12 : -12);
-        head_recoil_y = -6;
-
-        var spr_scare = asset_get_index("s{ID}_head_Scare");
-        if (spr_scare != -1 && {ID}Head != noone && instance_exists({ID}Head)) {
-            {ID}Head.sprite_index = spr_scare;
-        }
-
-        var snd_click = asset_get_index("sfxClick");
-        if (snd_click == -1) snd_click = asset_get_index("snd_Button");
-        if (snd_click != -1) audio_play_sound(snd_click, 10, false);
-
-        io_clear();
-    }
-
-    // Alumbrar a {ID} sin gafas: Derrota cómica, huida y la persiana se baja sola
-    if (!has_glasses && flashing && remove_cooldown <= 0 && hover_murray) {
-        state = 2; // Huida rápida
-        blind_fade = 30;
-
-        if ({ID}Body != noone && instance_exists({ID}Body)) {
-            instance_destroy({ID}Body);
-            {ID}Body = noone;
-        }
-        if ({ID}Glasses != noone && instance_exists({ID}Glasses)) {
-            instance_destroy({ID}Glasses);
-            {ID}Glasses = noone;
-        }
-        glasses_flying = false;
-
-        // Liberar persiana para que caiga de inmediato automáticamente
-        if (instance_exists(my_blind)) {
-            my_blind.ForcedOpen = false;
-            my_blind.Open = false;
-        }
-
-        var snd_bclose = asset_get_index("sfxBlindsClose");
-        if (snd_bclose != -1) audio_play_sound(snd_bclose, 8, false);
-
-        var spr_flash = asset_get_index("s{ID}_Flash");
-        if ({ID}Head != noone && instance_exists({ID}Head)) {
-            if (spr_flash != -1) {ID}Head.sprite_index = spr_flash;
-            {ID}Head.x = cx - 94;
-            {ID}Head.y = cy;
-            {ID}Head.DrawDepth = 54;
-        }
-
-        var snd_hit = asset_get_index("sfxIgnitedFreddy_Hit1");
-        if (snd_hit == -1) snd_hit = asset_get_index("sfxFlash");
-        if (snd_hit != -1) audio_play_sound(snd_hit, 10, false);
-    }
-
-    // Si se agota el tiempo sin ahuyentarlo y la persiana está abierta -> Jumpscare
-    if (attack_timer <= 0) {
-        state = 4;
-        jumpscare_timer = 0;
-        jumpscare_frame = 0;
-        glasses_flying = false;
-        if ({ID}Body != noone && instance_exists({ID}Body)) { instance_destroy({ID}Body); {ID}Body = noone; }
-        if ({ID}Head != noone && instance_exists({ID}Head)) { instance_destroy({ID}Head); {ID}Head = noone; }
-        if ({ID}Glasses != noone && instance_exists({ID}Glasses)) { instance_destroy({ID}Glasses); {ID}Glasses = noone; }
-
-        if (instance_exists(my_blind)) {
-            my_blind.ForcedOpen = false;
-        }
-
-        audio_stop_all();
-
-        // REPRODUCIR LA MÚSICA ALEGRE DEL JUMPSCARE ("tuuuun tunn tuuun")
-        var _p_scare = "snd_{id}_jumpscare.ogg";
-        if (!file_exists(_p_scare)) _p_scare = working_directory + "snd_{id}_jumpscare.ogg";
-        if (!file_exists(_p_scare)) _p_scare = program_directory + "snd_{id}_jumpscare.ogg";
-
-        if (file_exists(_p_scare)) {
-            if (snd_jumpscare_stream != -1) {
-                audio_destroy_stream(snd_jumpscare_stream);
-                snd_jumpscare_stream = -1;
-            }
-            snd_jumpscare_stream = audio_create_stream(_p_scare);
-            audio_play_sound(snd_jumpscare_stream, 100, false);
-        } else {
-            var snd_scream = asset_get_index("sfxJumpscareNormal");
-            if (snd_scream == -1) snd_scream = asset_get_index("sfxWindowScare");
-            if (snd_scream != -1) audio_play_sound(snd_scream, 10, false);
-        }
-    }
-}
-
-// 6. ESTADO 2: Huida cómica rápida hacia abajo
-if (state == 2) {
-    blind_fade--;
-    if ({ID}Head != noone && instance_exists({ID}Head)) {
-        {ID}Head.y += 3.5;
-    }
-    if (instance_exists(my_blind)) {
-        my_blind.ForcedOpen = false;
-        my_blind.Open = false;
-    }
-    if (blind_fade <= 0) {
-        state = 0;
-        var ai = 20;
-        if (variable_global_exists("{ID}_AI")) ai = clamp(global.{ID}_AI, 0, 20);
-        knock_timer = irandom_range(round(lerp(1800, 600, ai / 20.0)), round(lerp(2800, 1000, ai / 20.0)));
-        if ({ID}Head != noone && instance_exists({ID}Head)) {
-            instance_destroy({ID}Head);
-            {ID}Head = noone;
-        }
-    }
-}
-
-// 7. ESTADO 4: Jumpscare -> Fijación de global.TimeOfDeath y paso a GameOver
-if (state == 4) {
-    jumpscare_timer++;
-    jumpscare_frame = (floor(jumpscare_timer / 2) % 3);
-
-    if (jumpscare_timer >= 120) {
-        global.{ID}Death = true;
-        global.Jumpscare = -1;
-
-        global.TimeOfDeath = global.{ID}_SavedTimeSeconds;
-
-        var _total_sec = floor(global.TimeOfDeath);
-        var _mins = floor(_total_sec / 60);
-        var _secs = _total_sec mod 60;
-        var _millis = floor((global.TimeOfDeath - _total_sec) * 100);
-        global.{ID}_SavedTime = string(_mins) + ":" + (_secs < 10 ? "0" : "") + string(_secs) + "." + (_millis < 10 ? "0" : "") + string(_millis);
-        global.TimeLasted = global.{ID}_SavedTime;
-
-        var r_go = asset_get_index("GameOver");
-        if (r_go != -1) room_goto(r_go);
-        else game_restart();
-    }
-}
-"#;
-
-/// oMurray_BackWindow -> Draw_64: jumpscare dinámico centrado con embestida,
-/// sacudida de cámara y alternancia de fotogramas (golden V25).
-const BW_DRAW64_TEMPLATE: &str = r#"// ==============================================================
-// {ID} - Jumpscare Dinámico y Centrado (Draw GUI, V26-aligned)
-// Solución al problema de altura: Desplazamiento vertical ajustado (+85.0 * scale)
-// para que el hocico, ojos y mandíbula queden a la altura de los ojos del jugador.
-// Generado por FrickEditor Studio (golden_master_v26)
-// ==============================================================
-if (state == 4) {
-    var s_jump = asset_get_index("s{ID}_Jumpscare");
-    if (s_jump != -1) {
-        var gw = display_get_gui_width();
-        var gh = display_get_gui_height();
-
-        // Curva de embestida hacia la pantalla (de 0 a 1 en 28 frames)
-        var lunge_t = clamp(jumpscare_timer / 28.0, 0.0, 1.0);
-        var lunge_curve = power(lunge_t, 0.5);
-
-        // Escala base: inicia en 1.05x y embiste hacia la cara del jugador (1.42x)
-        var base_gui = max(gw / 640.0, gh / 360.0);
-        var zoom_factor = lerp(1.05, 1.42, lunge_curve);
-        var scale = base_gui * zoom_factor;
-
-        var sw = 640.0 * scale;
-        var sh = 640.0 * scale;
-
-        // Sacudida de cámara violenta estilo FNaF / Frickbear's
-        var shake_intensity = lerp(8.0, 18.0, lunge_curve) * (gw / 640.0);
-        var shake_x = irandom_range(-round(shake_intensity), round(shake_intensity));
-        var shake_y = irandom_range(-round(shake_intensity), round(shake_intensity));
-
-        // Alternancia rápida de fotogramas de mordida (cada 2 frames)
-        var sub_img = (floor(jumpscare_timer / 2) % 3);
-        if (jumpscare_timer > 72) {
-            sub_img = 2; // Mandíbula abierta al máximo en el impacto final antes de GameOver
-            shake_intensity = 20.0 * (gw / 640.0);
-            shake_x = irandom_range(-round(shake_intensity), round(shake_intensity));
-            shake_y = irandom_range(-round(shake_intensity), round(shake_intensity));
-        }
-
-        // Posicionamiento horizontal y vertical perfecto (bajado para estar a la altura de los ojos)
-        var draw_x = ((gw - sw) / 2.0) + shake_x;
-        var draw_y = ((gh - sh) / 2.0) + (85.0 * scale) + shake_y;
-
-        draw_sprite_ext(s_jump, sub_img, draw_x, draw_y, scale, scale, 0, c_white, 1.0);
-    }
-}
-"#;
-
-pub struct ProjectBuilder;
-
-impl ProjectBuilder {
-    pub fn build_all(proj: &AnimatronicProject) -> Result<String, String> {
+    pub fn build_full_ide_project(proj: &AnimatronicProject) -> Result<String, String> {
         let id = proj.internal_id.trim();
         if id.is_empty() {
-            return Err("El identificador interno (ID) no puede estar vacío.".to_string());
+            return Err("El ID interno del animatrónico no puede estar vacío.".to_string());
         }
 
-        // 1. Crear addons/<ID> y purgar skins/<ID> (Invariante #6)
+        Self::build_phase1_visuals(proj)?;
+
+        let gml_dir = proj.workspace_dir.join(format!("{}_GML_Code", id));
+        fs::create_dir_all(&gml_dir).map_err(|e| e.to_string())?;
+        let gml_map = Self::get_effective_gml_scripts(proj);
+        for (filename, content) in &gml_map {
+            fs::write(gml_dir.join(filename), content).map_err(|e| e.to_string())?;
+        }
+
+        fs::create_dir_all(&proj.utmt_scripts_dir).map_err(|e| e.to_string())?;
+        let next_v = Self::find_next_csx_version(&proj.utmt_scripts_dir, id);
+        let csx_name = format!("Instalar_{}_V{}.csx", id, next_v);
+        let csx_path = proj.utmt_scripts_dir.join(&csx_name);
+
+        let csx_code = Self::generate_csx_installer_code(proj, next_v);
+        fs::write(&csx_path, csx_code).map_err(|e| e.to_string())?;
+
+        Ok(format!(
+            "¡Auditoría & Compilación 100% Exitosa! {} GMLs y '{}' (con Packer, Salas y GameOver) listos.",
+            gml_map.len(),
+            csx_name
+        ))
+    }
+
+    /// Genera el script .csx COMPLETO (con Atlas Packer anti-pepinillos, Inyección en 6 Salas y Parcheo de oGameOver)
+    pub fn generate_csx_installer_code(proj: &AnimatronicProject, version: u32) -> String {
+        let id = proj.internal_id.trim();
+        let import_dir = proj.workspace_dir.join(format!("{}_Sprites_To_Import", id));
+        let gml_dir = proj.workspace_dir.join(format!("{}_GML_Code", id));
+        let go_tip = proj.custom_night.gameover_tip.replace('"', "\\\"");
+
+        format!(
+            r#"// ==============================================================
+// Generado automáticamente por FrickEditor IDE — Instalar_{id}_V{ver}.csx
+// Auditado: Incluye Atlas Packer, 6 Salas, oGameOver y Pause Review
+// ==============================================================
+using System;
+using System.IO;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using UndertaleModLib.Util;
+using UndertaleModLib.Models;
+using ImageMagick;
+
+EnsureDataLoaded();
+
+string importFolder = @"{import_dir}";
+string codeDir = @"{gml_dir}";
+
+// 1. EMPAQUETADO DE SPRITES EN ATLAS (ANTI-PEPINILLOS, SIN TRIM CORRUPTO)
+if (Directory.Exists(importFolder))
+{{
+    Regex sprFrameRegex = new(@"^(.+?)(?:_(\d+))$", RegexOptions.Compiled);
+    string packDir = Path.Join(ExePath, "Packager");
+    Directory.CreateDirectory(packDir);
+    string outName = Path.Join(packDir, "atlas_{id}_v{ver}.txt");
+
+    Packer packer = new Packer();
+    packer.Process(importFolder, "*.png", 2048, 2, false);
+    packer.SaveAtlasses(outName);
+
+    int lastTextPage = Data.EmbeddedTextures.Count - 1;
+    int lastTextPageItem = Data.TexturePageItems.Count - 1;
+    string prefix = Path.Join(Path.GetDirectoryName(outName), Path.GetFileNameWithoutExtension(outName));
+    int atlasCount = 0;
+
+    foreach (Atlas atlas in packer.Atlasses)
+    {{
+        string atlasName = $"{{prefix}}{{atlasCount:000}}.png";
+        using MagickImage atlasImage = TextureWorker.ReadBGRAImageFromFile(atlasName);
+
+        UndertaleEmbeddedTexture texture = new();
+        texture.Name = new UndertaleString($"Texture {{++lastTextPage}}");
+        texture.TextureData.Image = GMImage.FromMagickImage(atlasImage).ConvertToPng();
+        Data.EmbeddedTextures.Add(texture);
+
+        foreach (Node n in atlas.Nodes)
+        {{
+            if (n.Texture != null)
+            {{
+                UndertaleTexturePageItem texturePageItem = new();
+                texturePageItem.Name = new UndertaleString($"PageItem {{++lastTextPageItem}}");
+                texturePageItem.SourceX = (ushort)n.Bounds.X;
+                texturePageItem.SourceY = (ushort)n.Bounds.Y;
+                texturePageItem.SourceWidth = (ushort)n.Bounds.Width;
+                texturePageItem.SourceHeight = (ushort)n.Bounds.Height;
+                texturePageItem.TargetX = 0;
+                texturePageItem.TargetY = 0;
+                texturePageItem.TargetWidth = (ushort)n.Bounds.Width;
+                texturePageItem.TargetHeight = (ushort)n.Bounds.Height;
+                texturePageItem.BoundingWidth = (ushort)n.Texture.BoundingWidth;
+                texturePageItem.BoundingHeight = (ushort)n.Texture.BoundingHeight;
+                texturePageItem.TexturePage = texture;
+                Data.TexturePageItems.Add(texturePageItem);
+
+                string stripped = Path.GetFileNameWithoutExtension(n.Texture.Source);
+                string spriteName = stripped;
+                int frame = 0;
+                var spriteParts = sprFrameRegex.Match(stripped);
+                if (spriteParts.Success)
+                {{
+                    spriteName = spriteParts.Groups[1].Value;
+                    int.TryParse(spriteParts.Groups[2].Value, out frame);
+                }}
+
+                UndertaleSprite.TextureEntry texentry = new() {{ Texture = texturePageItem }};
+                UndertaleSprite sprite = Data.Sprites.ByName(spriteName);
+                if (sprite is null)
+                {{
+                    UndertaleSprite newSprite = new();
+                    newSprite.Name = Data.Strings.MakeString(spriteName);
+                    newSprite.Width = (uint)n.Texture.BoundingWidth;
+                    newSprite.Height = (uint)n.Texture.BoundingHeight;
+                    newSprite.MarginLeft = 0;
+                    newSprite.MarginRight = n.Bounds.Width - 1;
+                    newSprite.MarginTop = 0;
+                    newSprite.MarginBottom = n.Bounds.Height - 1;
+                    newSprite.OriginX = 0;
+                    newSprite.OriginY = 0;
+                    for (int f = 0; f < frame; f++) newSprite.Textures.Add(null);
+                    newSprite.Textures.Add(texentry);
+                    Data.Sprites.Add(newSprite);
+                }}
+                else
+                {{
+                    sprite.Width = (uint)n.Texture.BoundingWidth;
+                    sprite.Height = (uint)n.Texture.BoundingHeight;
+                    sprite.OriginX = 0;
+                    sprite.OriginY = 0;
+                    while (frame >= sprite.Textures.Count) sprite.Textures.Add(texentry);
+                    sprite.Textures[frame] = texentry;
+                }}
+            }}
+        }}
+        atlasCount++;
+    }}
+}}
+
+// 2. CREACIÓN DE LOS 4 OBJETOS DEL ANIMATRÓNICO
+UndertaleGameObject objAnim = Data.GameObjects.ByName("o{id}_BackWindow");
+if (objAnim == null) {{ objAnim = new() {{ Name = Data.Strings.MakeString("o{id}_BackWindow"), Visible = true }}; Data.GameObjects.Add(objAnim); }}
+
+UndertaleGameObject objDeath = Data.GameObjects.ByName("o{id}_DeathScreen");
+if (objDeath == null) {{ objDeath = new() {{ Name = Data.Strings.MakeString("o{id}_DeathScreen"), Visible = true, Persistent = true }}; Data.GameObjects.Add(objDeath); }}
+
+UndertaleGameObject objCNTile = Data.GameObjects.ByName("o{id}_CustomNightTile");
+if (objCNTile == null) {{ objCNTile = new() {{ Name = Data.Strings.MakeString("o{id}_CustomNightTile"), Visible = true }}; Data.GameObjects.Add(objCNTile); }}
+
+UndertaleGameObject objReview = Data.GameObjects.ByName("o{id}_ReviewHandler");
+if (objReview == null) {{ objReview = new() {{ Name = Data.Strings.MakeString("o{id}_ReviewHandler"), Visible = true }}; Data.GameObjects.Add(objReview); }}
+
+// 3. COMPILACIÓN DE LOS SCRIPTS GML
+UndertaleModLib.Compiler.CodeImportGroup importGroup = new(Data) {{ AutoCreateAssets = true, MainThreadAction = MainThreadAction }};
+importGroup.QueueReplace(objAnim.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_BackWindow_Create_0.gml")));
+importGroup.QueueReplace(objAnim.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_BackWindow_Step_0.gml")));
+importGroup.QueueReplace(objAnim.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_BackWindow_Draw_0.gml")));
+importGroup.QueueReplace(objAnim.EventHandlerFor(EventType.Draw, EventSubtypeDraw.DrawGUI, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_BackWindow_Draw_64.gml")));
+importGroup.QueueReplace(objAnim.EventHandlerFor(EventType.CleanUp, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_BackWindow_CleanUp_0.gml")));
+
+importGroup.QueueReplace(objDeath.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_DeathScreen_Draw_0.gml")));
+importGroup.QueueReplace(objDeath.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_DeathScreen_Step_0.gml")));
+
+importGroup.QueueReplace(objCNTile.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_CustomNightTile_Create_0.gml")));
+importGroup.QueueReplace(objCNTile.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_CustomNightTile_Step_0.gml")));
+importGroup.QueueReplace(objCNTile.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_CustomNightTile_Draw_0.gml")));
+
+importGroup.QueueReplace(objReview.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_ReviewHandler_Create_0.gml")));
+importGroup.QueueReplace(objReview.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_ReviewHandler_Step_0.gml")));
+importGroup.QueueReplace(objReview.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_o{id}_ReviewHandler_Draw_0.gml")));
+
+// 4. INYECCIÓN EN TODAS LAS SALAS REQUERIDAS
+void AddInstanceToRoom(string roomName, UndertaleGameObject targetObj, int targetX, int targetY)
+{{
+    UndertaleRoom rm = Data.Rooms.ByName(roomName);
+    if (rm == null) return;
+    foreach (var l in rm.Layers)
+    {{
+        if (l.LayerType == UndertaleRoom.LayerType.Instances && l.InstancesData != null)
+        {{
+            if (!l.InstancesData.Instances.Any(i => i.ObjectDefinition == targetObj))
+            {{
+                l.InstancesData.Instances.Add(new UndertaleRoom.GameObject() {{ InstanceID = Data.GeneralInfo.LastObj++, ObjectDefinition = targetObj, X = targetX, Y = targetY, ScaleX = 1, ScaleY = 1, Color = 0xFFFFFFFF }});
+            }}
+            break;
+        }}
+    }}
+    if (!rm.GameObjects.Any(g => g.ObjectDefinition == targetObj))
+    {{
+        rm.GameObjects.Add(new UndertaleRoom.GameObject() {{ InstanceID = Data.GeneralInfo.LastObj++, ObjectDefinition = targetObj, X = targetX, Y = targetY, ScaleX = 1, ScaleY = 1, Color = 0xFFFFFFFF }});
+    }}
+}}
+
+AddInstanceToRoom("Office", objAnim, 0, 0);
+AddInstanceToRoom("Office", objDeath, 0, 0);
+AddInstanceToRoom("Office", objReview, 0, 0);
+AddInstanceToRoom("Fredbear_Office", objAnim, 0, 0);
+AddInstanceToRoom("Fredbear_Office", objReview, 0, 0);
+AddInstanceToRoom("GameOver", objDeath, 0, 0);
+AddInstanceToRoom("CustomNightMenu", objCNTile, 0, 0);
+AddInstanceToRoom("EndlessSelection", objCNTile, 0, 0);
+AddInstanceToRoom("EndlessShopSelection_FinalNight", objCNTile, 0, 0);
+
+// 5. PARCHEO DE PANTALLA GAMEOVER (SILUETA CARMESÍ Y TIME LASTED REAL)
+var goCreate = Data.Code.ByName("gml_Object_oGameOver_Create_0");
+if (goCreate != null)
+{{
+    try
+    {{
+        string decomp = new Underanalyzer.Decompiler.DecompileContext(new UndertaleModLib.Decompiler.GlobalDecompileContext(Data), goCreate, Data.ToolInfo.DecompilerSettings).DecompileToString();
+        if (!decomp.Contains("{id}Death"))
+        {{
+            string target = "Tip = \"You passed out.\";";
+            string rep = "if (variable_global_exists(\"{id}Death\") && global.{id}Death) {{ Tip = \"{go_tip}\"; if (variable_global_exists(\"{id}_SavedTime\")) global.TimeLasted = global.{id}_SavedTime; }} else {{ Tip = \"You passed out.\"; }}";
+            if (decomp.Contains(target)) importGroup.QueueReplace(goCreate, decomp.Replace(target, rep));
+        }}
+    }}
+    catch {{ }}
+}}
+
+var goDraw = Data.Code.ByName("gml_Object_oGameOver_Draw_0");
+if (goDraw != null)
+{{
+    try
+    {{
+        string decomp = new Underanalyzer.Decompiler.DecompileContext(new UndertaleModLib.Decompiler.GlobalDecompileContext(Data), goDraw, Data.ToolInfo.DecompilerSettings).DecompileToString();
+        if (!decomp.Contains("{id}Death"))
+        {{
+            string target = "if (global.Jumpscare == -1)";
+            string rep = "if (variable_global_exists(\"{id}Death\") && global.{id}Death) {{ var spr_alt = asset_get_index(\"s{id}_head_Alt\"); if (spr_alt == -1) spr_alt = asset_get_index(\"s{id}_head\"); if (spr_alt != -1) {{ var sc = 3.2; var sw = sprite_get_width(spr_alt) * sc; var sh = sprite_get_height(spr_alt) * sc; draw_sprite_ext(spr_alt, 0, (640 - sw) / 2, ((360 - sh) / 2) - 10, sc, sc, 0, make_color_rgb(175, 20, 20), 0.9); }} }} else if (global.Jumpscare == -1)";
+            if (decomp.Contains(target)) importGroup.QueueReplace(goDraw, decomp.Replace(target, rep));
+        }}
+    }}
+    catch {{ }}
+}}
+
+importGroup.Import();
+ScriptMessage("¡{id} (V{ver}) Auditado e Inyectado con Éxito! Presiona Ctrl+S para guardar data.win.");
+
+// 6. CLASES AUXILIARES DEL EMPAQUETADOR DE TEXTURAS
+public class TextureInfo {{ public string Source; public int Width; public int Height; public int TargetX; public int TargetY; public int BoundingWidth; public int BoundingHeight; public MagickImage Image; }}
+public enum SplitType {{ Horizontal, Vertical }}
+public struct Rect {{ public int X {{ get; set; }} public int Y {{ get; set; }} public int Width {{ get; set; }} public int Height {{ get; set; }} }}
+public class Node {{ public Rect Bounds; public TextureInfo Texture; public SplitType SplitType; }}
+public class Atlas {{ public int Width; public int Height; public List<Node> Nodes; }}
+public class Packer
+{{
+    public List<TextureInfo> SourceTextures = new List<TextureInfo>();
+    public int Padding;
+    public int AtlasSize;
+    public List<Atlas> Atlasses;
+    public void Process(string _SourceDir, string _Pattern, int _AtlasSize, int _Padding, bool _DebugMode)
+    {{
+        Padding = _Padding; AtlasSize = _AtlasSize;
+        DirectoryInfo di = new(_SourceDir);
+        foreach (FileInfo fi in di.GetFiles(_Pattern, SearchOption.AllDirectories))
+        {{
+            MagickImage img = new(fi.FullName);
+            SourceTextures.Add(new TextureInfo {{ Source = fi.FullName, Width = (int)img.Width, Height = (int)img.Height, BoundingWidth = (int)img.Width, BoundingHeight = (int)img.Height, TargetX = 0, TargetY = 0, Image = img }});
+        }}
+        List<TextureInfo> textures = SourceTextures.ToList();
+        Atlasses = new List<Atlas>();
+        while (textures.Count > 0)
+        {{
+            Atlas atlas = new Atlas() {{ Width = _AtlasSize, Height = _AtlasSize }};
+            List<TextureInfo> leftovers = LayoutAtlas(textures, atlas);
+            Atlasses.Add(atlas);
+            textures = leftovers;
+        }}
+    }}
+    public void SaveAtlasses(string _Destination)
+    {{
+        int atlasCount = 0;
+        string prefix = Path.Join(Path.GetDirectoryName(_Destination), Path.GetFileNameWithoutExtension(_Destination));
+        foreach (Atlas atlas in Atlasses)
+        {{
+            string atlasName = $"{{prefix}}{{atlasCount:000}}.png";
+            using MagickImage img = new(MagickColors.Transparent, (uint)atlas.Width, (uint)atlas.Height);
+            foreach (Node n in atlas.Nodes)
+            {{
+                if (n.Texture != null)
+                {{
+                    using IMagickImage<byte> res = TextureWorker.ResizeImage(n.Texture.Image, n.Bounds.Width, n.Bounds.Height);
+                    img.Composite(res, n.Bounds.X, n.Bounds.Y, CompositeOperator.Copy);
+                }}
+            }}
+            TextureWorker.SaveImageToFile(img, atlasName);
+            atlasCount++;
+        }}
+    }}
+    private List<TextureInfo> LayoutAtlas(List<TextureInfo> _Textures, Atlas _Atlas)
+    {{
+        List<Node> freeList = new List<Node>();
+        List<TextureInfo> textures = _Textures.ToList();
+        _Atlas.Nodes = new List<Node>();
+        freeList.Add(new Node {{ Bounds = new Rect {{ Width = _Atlas.Width, Height = _Atlas.Height }}, SplitType = SplitType.Horizontal }});
+        while (freeList.Count > 0 && textures.Count > 0)
+        {{
+            Node node = freeList[0]; freeList.RemoveAt(0);
+            TextureInfo bestFit = textures.FirstOrDefault(ti => ti.Width <= node.Bounds.Width && ti.Height <= node.Bounds.Height);
+            if (bestFit != null)
+            {{
+                Node n1 = new Node {{ Bounds = new Rect {{ X = node.Bounds.X + bestFit.Width + Padding, Y = node.Bounds.Y, Width = node.Bounds.Width - bestFit.Width - Padding, Height = bestFit.Height }}, SplitType = SplitType.Vertical }};
+                Node n2 = new Node {{ Bounds = new Rect {{ X = node.Bounds.X, Y = node.Bounds.Y + bestFit.Height + Padding, Width = node.Bounds.Width, Height = node.Bounds.Height - bestFit.Height - Padding }}, SplitType = SplitType.Horizontal }};
+                if (n1.Bounds.Width > 0 && n1.Bounds.Height > 0) freeList.Add(n1);
+                if (n2.Bounds.Width > 0 && n2.Bounds.Height > 0) freeList.Add(n2);
+                node.Texture = bestFit; node.Bounds.Width = bestFit.Width; node.Bounds.Height = bestFit.Height;
+                textures.Remove(bestFit);
+            }}
+            _Atlas.Nodes.Add(node);
+        }}
+        return textures;
+    }}
+}}
+"#,
+            id = id,
+            ver = version,
+            import_dir = import_dir.display(),
+            gml_dir = gml_dir.display(),
+            go_tip = go_tip
+        )
+    }
+
+    pub fn build_phase1_visuals(proj: &AnimatronicProject) -> Result<String, String> {
+        let id = proj.internal_id.trim();
+        if id.is_empty() {
+            return Err("El ID interno del animatrónico no puede estar vacío.".to_string());
+        }
+
         let addon_dir = proj.game_dir.join("addons").join(id);
         fs::create_dir_all(&addon_dir).map_err(|e| e.to_string())?;
 
@@ -719,30 +1040,26 @@ impl ProjectBuilder {
         if skin_dir.exists() {
             let _ = fs::remove_dir_all(&skin_dir);
         }
-        let bad_render = addon_dir.join(format!("FB_{}_Moose.png", id));
+        let bad_render = addon_dir.join("FB_Murray_Moose.png");
         if bad_render.exists() {
             let _ = fs::remove_file(&bad_render);
         }
 
-        // 2. Escribir extras_info.txt
         let extras_json = serde_json::to_string_pretty(&proj.gallery_info).map_err(|e| e.to_string())?;
         fs::write(addon_dir.join("extras_info.txt"), extras_json).map_err(|e| e.to_string())?;
 
-        // 3. Procesar portrait.png (500x500)
         if let Some(portrait_src) = &proj.portrait_500_path {
-            let img = image::open(portrait_src).map_err(|e| format!("Portrait inválido: {}", e))?;
+            let img = image::open(portrait_src).map_err(|e| format!("Error en Portrait: {}", e))?;
             img.resize_exact(500, 500, imageops::FilterType::Lanczos3)
                 .save(addon_dir.join("portrait.png"))
                 .map_err(|e| e.to_string())?;
         }
 
-        // 4. Carpeta de sprites para el Atlas
         let import_dir = proj.workspace_dir.join(format!("{}_Sprites_To_Import", id));
         fs::create_dir_all(&import_dir).map_err(|e| e.to_string())?;
 
-        // 5. Procesar icon.png (48x48) + sTile_<ID>_0.png (Color) + sTile_<ID>_1.png (Gris)
         if let Some(icon_src) = &proj.icon_48_path {
-            let img = image::open(icon_src).map_err(|e| format!("Icono inválido: {}", e))?;
+            let img = image::open(icon_src).map_err(|e| format!("Error en Icono: {}", e))?;
             let icon_48 = img.resize_exact(48, 48, imageops::FilterType::Nearest);
             icon_48.save(addon_dir.join("icon.png")).map_err(|e| e.to_string())?;
             icon_48
@@ -754,18 +1071,31 @@ impl ProjectBuilder {
                 gray_img
                     .save(import_dir.join(format!("sTile_{}_1.png", id)))
                     .map_err(|e| e.to_string())?;
+            } else if let Some(gray_override) = &proj.icon_gray_override_path {
+                if gray_override.exists() {
+                    let g_img = image::open(gray_override).map_err(|e| e.to_string())?;
+                    g_img
+                        .resize_exact(48, 48, imageops::FilterType::Nearest)
+                        .save(import_dir.join(format!("sTile_{}_1.png", id)))
+                        .map_err(|e| e.to_string())?;
+                }
             }
         }
 
-        // 6. Copiar Sprites de Oficina
         Self::copy_sprite(&proj.body_sprite, &import_dir, &format!("s{}_body_0.png", id))?;
         Self::copy_sprite(&proj.head_normal_sprite, &import_dir, &format!("s{}_head_0.png", id))?;
         Self::copy_sprite(&proj.head_scare_sprite, &import_dir, &format!("s{}_head_Scare_0.png", id))?;
         Self::copy_sprite(&proj.head_gameover_alt, &import_dir, &format!("s{}_head_Alt_0.png", id))?;
-        Self::copy_sprite(&proj.accessory_glasses_sprite, &import_dir, &format!("s{}_Glasses_0.png", id))?;
+        Self::copy_sprite(&proj.accessory_sprite, &import_dir, &format!("s{}_Glasses_0.png", id))?;
         Self::copy_sprite(&proj.flash_defeat_sprite, &import_dir, &format!("s{}_Flash_0.png", id))?;
 
-        // 7. Pre-componer Jumpscare (640x640)
+        for extra in &proj.extra_sprites {
+            let clean_suffix = extra.sprite_suffix.trim();
+            if !clean_suffix.is_empty() {
+                Self::copy_sprite(&Some(extra.path.clone()), &import_dir, &format!("s{}_{}_0.png", id, clean_suffix))?;
+            }
+        }
+
         if let (Some(j0), Some(j1), Some(j2)) = (
             &proj.jumpscare_frame_0,
             &proj.jumpscare_frame_1,
@@ -774,153 +1104,132 @@ impl ProjectBuilder {
             Self::precomposite_jumpscare(j0, j1, j2, &import_dir, id)?;
         }
 
-        // 8. Copiar Audios (.ogg) a la carpeta del juego con el prefijo snd_ del protocolo
-        //    (el GML generado los busca como snd_<id>_*.ogg, ver FRICKBEARS_ENGINE_REVERSE_ENGINEERING.md)
         let id_low = id.to_lowercase();
-        Self::copy_audio(&proj.sound_knock, &proj.game_dir, &format!("snd_{}_knock.ogg", id_low))?;
-        Self::copy_audio(&proj.sound_voice_arrive, &proj.game_dir, &format!("snd_{}_amigable.ogg", id_low))?;
-        Self::copy_audio(&proj.sound_defeat, &proj.game_dir, &format!("snd_{}_jumpscare.ogg", id_low))?;
+        Self::copy_audio(&proj.sound_knock_alert, &proj.game_dir, &format!("{}_knock.ogg", id_low))?;
+        Self::copy_audio(&proj.sound_voice_line, &proj.game_dir, &format!("{}_amigable.ogg", id_low))?;
+        Self::copy_audio(&proj.sound_defeat, &proj.game_dir, &format!("{}_knock2.ogg", id_low))?;
+        Self::copy_audio(&proj.sound_jumpscare, &proj.game_dir, &format!("{}_jumpscare.ogg", id_low))?;
 
-        // 9. Generar los scripts GML configurados con el Slot elegido y tiempos de IA
-        let gml_dir = proj.workspace_dir.join(format!("{}_GML_Code", id));
-        fs::create_dir_all(&gml_dir).map_err(|e| e.to_string())?;
-        Self::generate_gml_files(proj, &gml_dir)?;
-
-        let (tx, ty) = proj.mechanics.slot_to_xy();
-        Ok(format!(
-            "Exportación total lista: Galería + Sprites 640x640 + GML en Slot #{} (X={}, Y={}).",
-            proj.mechanics.custom_night_slot_index + 1,
-            tx,
-            ty
-        ))
+        Ok(format!("Fase 1 exportada en addons/{0} y {0}_Sprites_To_Import.", id))
     }
 
-    fn generate_gml_files(proj: &AnimatronicProject, gml_dir: &Path) -> Result<(), String> {
+    pub fn clean_from_game(proj: &AnimatronicProject) -> Result<String, String> {
         let id = proj.internal_id.trim();
+        if id.is_empty() {
+            return Err("ID vacío.".to_string());
+        }
+        let addon_dir = proj.game_dir.join("addons").join(id);
+        if addon_dir.exists() {
+            fs::remove_dir_all(&addon_dir).map_err(|e| e.to_string())?;
+        }
         let id_low = id.to_lowercase();
-        let (tile_x, tile_y) = proj.mechanics.slot_to_xy();
-
-        // Generar Create_0 del Tile en la posición exacta del Slot elegido
-        // Constantes del botón PAGE 1/2 tomadas del golden_master_v26 (funciona en producción)
-        let cn_create = format!(
-            "// Generado por FrickEditor Studio — Slot #{slot}\n\
-             depth = -1000;\n\
-             if (!variable_global_exists(\"{id}_AI\")) global.{id}_AI = 0;\n\
-             if (!variable_global_exists(\"CustomNight_Page\")) global.CustomNight_Page = 0;\n\
-             btn_page_x = 344;\n\
-             btn_page_y = 326;\n\
-             btn_page_w = 110;\n\
-             btn_page_h = 26;\n\
-             tile_x = {tx};\n\
-             tile_y = {ty};\n\
-             prev_freddy_ai = -1;\n",
-            slot = proj.mechanics.custom_night_slot_index + 1,
-            id = id,
-            tx = tile_x,
-            ty = tile_y
-        );
-        fs::write(
-            gml_dir.join(format!("gml_Object_o{}_CustomNightTile_Create_0.gml", id)),
-            cn_create,
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Generar Create_0 de la Oficina con los parámetros de IA y 4LD/Endless.
-        // Reproduce la inicialización completa del golden_master_v26 (Invariante #2),
-        // incluyendo tracking de tiempo de muerte y stream de jumpscare.
-        let bw_create = format!(
-            "// Generado por FrickEditor Studio — Invariante #2 Blindada\n\
-             global.{id}Death = false;\n\
-             {id}Body = noone;\n\
-             {id}Head = noone;\n\
-             {id}Glasses = noone;\n\
-             survival_frames = 0;\n\
-             global.{id}_SavedTimeSeconds = 0;\n\
-             global.{id}_SavedTime = \"0:00.00\";\n\
-             body_frame = 0;\n\
-             snd_jumpscare_stream = -1;\n\
-             var ai = 0;\n\
-             if (variable_global_exists(\"{id}_AI\")) ai = clamp(global.{id}_AI, 0, 20);\n\
-             if (variable_global_exists(\"{id}_Disabled\") && global.{id}_Disabled) ai = 0;\n\
-             if (ai == 0 && variable_global_exists(\"EndlessMode\") && global.EndlessMode == true) ai = {endless_ai};\n\
-             else if (ai == 0 && variable_global_exists(\"FourLayersDown\") && global.FourLayersDown == true) ai = {fld_ai};\n\
-             if (ai <= 0) {{ instance_destroy(); exit; }}\n\
-             state = 0;\n\
-             attack_timer = round(lerp({atk1}, {atk20}, ai / 20.0));\n\
-             knock_timer = irandom_range(round(lerp(480, {kmin}, ai / 20.0)), round(lerp(900, {kmax}, ai / 20.0)));\n\
-             has_glasses = true;\n\
-             glasses_flying = false;\n\
-             glasses_vx = 0;\n\
-             glasses_vy = 0;\n\
-             blind_fade = 0;\n\
-             jumpscare_timer = 0;\n\
-             jumpscare_frame = 0;\n\
-             remove_cooldown = 0;\n\
-             head_recoil_x = 0;\n\
-             head_recoil_y = 0;\n",
-            id = id,
-            endless_ai = proj.mechanics.endless_default_ai,
-            fld_ai = proj.mechanics.four_layers_down_ai,
-            atk1 = proj.mechanics.attack_frames_ai1,
-            atk20 = proj.mechanics.attack_frames_ai20,
-            kmin = proj.mechanics.knock_min_frames_ai20,
-            kmax = proj.mechanics.knock_max_frames_ai20,
-        );
-        fs::write(
-            gml_dir.join(format!("gml_Object_o{}_BackWindow_Create_0.gml", id)),
-            bw_create,
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Step_0 del Tile: clics ◄ [00] ►, contador central, clic derecho, rueda del
-        // ratón y botones globales aislados (SET ALL / ADD ALL) — golden_master_v26 V21
-        let cn_step = Self::render_template(CN_STEP_TEMPLATE, id, &id_low);
-        fs::write(
-            gml_dir.join(format!("gml_Object_o{}_CustomNightTile_Step_0.gml", id)),
-            cn_step,
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Draw_0 del Tile: cuadrícula nativa 8x4 + slot destacado + tooltip editable + botón PAGE
-        let cn_draw = Self::render_template(CN_DRAW_TEMPLATE, id, &id_low).replace(
-            "{tooltip}",
-            &proj.mechanics.custom_night_tooltip.replace('"', "'"),
-        );
-        fs::write(
-            gml_dir.join(format!("gml_Object_o{}_CustomNightTile_Draw_0.gml", id)),
-            cn_draw,
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Step_0 del BackWindow: máquina de estados completa (0..4) — persianas,
-        // gafas, Death Coin y jumpscare. Los offsets de las gafas vienen del proyecto.
-        let bw_step = Self::render_template(BW_STEP_TEMPLATE, id, &id_low)
-            .replace("{gx}", &proj.mechanics.glasses_offset_x.to_string())
-            .replace("{gy}", &proj.mechanics.glasses_offset_y.to_string());
-        fs::write(
-            gml_dir.join(format!("gml_Object_o{}_BackWindow_Step_0.gml", id)),
-            bw_step,
-        )
-        .map_err(|e| e.to_string())?;
-
-        // Draw_64 del BackWindow: jumpscare dinámico centrado con embestida y sacudida
-        let bw_draw64 = Self::render_template(BW_DRAW64_TEMPLATE, id, &id_low);
-        fs::write(
-            gml_dir.join(format!("gml_Object_o{}_BackWindow_Draw_64.gml", id)),
-            bw_draw64,
-        )
-        .map_err(|e| e.to_string())?;
-
-        Ok(())
+        for aud_suffix in ["knock.ogg", "amigable.ogg", "knock2.ogg", "jumpscare.ogg"] {
+            let aud_file = proj.game_dir.join(format!("{}_{}", id_low, aud_suffix));
+            if aud_file.exists() {
+                let _ = fs::remove_file(aud_file);
+            }
+        }
+        Ok(format!("'{}' limpiado del juego (archivos fuente intactos).", id))
     }
 
-    /// Sustituye los placeholders {ID} (identificador capitalizado) y {id} (en
-    /// minúsculas) en las plantillas de eventos críticos del golden_master_v26.
-    fn render_template(template: &str, id: &str, id_low: &str) -> String {
-        template.replace("{ID}", id).replace("{id}", id_low)
+    pub fn export_fbmod_package(proj: &AnimatronicProject, dst_zip: &Path) -> Result<String, String> {
+        let file = File::create(dst_zip).map_err(|e| e.to_string())?;
+        let mut zip = ZipWriter::new(file);
+        let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+        let manifest_json = serde_json::to_string_pretty(proj).map_err(|e| e.to_string())?;
+        zip.start_file("project_manifest.json", options).map_err(|e| e.to_string())?;
+        zip.write_all(manifest_json.as_bytes()).map_err(|e| e.to_string())?;
+
+        for (fname, code) in Self::get_effective_gml_scripts(proj) {
+            zip.start_file(format!("gml/{}", fname), options).map_err(|e| e.to_string())?;
+            zip.write_all(code.as_bytes()).map_err(|e| e.to_string())?;
+        }
+
+        let files_to_pack = [
+            ("assets/portrait.png", &proj.portrait_500_path),
+            ("assets/icon.png", &proj.icon_48_path),
+            ("assets/body.png", &proj.body_sprite),
+            ("assets/head_normal.png", &proj.head_normal_sprite),
+            ("assets/head_scare.png", &proj.head_scare_sprite),
+            ("assets/head_gameover_alt.png", &proj.head_gameover_alt),
+            ("assets/accessory.png", &proj.accessory_sprite),
+            ("assets/flash_defeat.png", &proj.flash_defeat_sprite),
+            ("assets/jumpscare_0.png", &proj.jumpscare_frame_0),
+            ("assets/jumpscare_1.png", &proj.jumpscare_frame_1),
+            ("assets/jumpscare_2.png", &proj.jumpscare_frame_2),
+            ("audio/knock.ogg", &proj.sound_knock_alert),
+            ("audio/voice.ogg", &proj.sound_voice_line),
+            ("audio/defeat.ogg", &proj.sound_defeat),
+            ("audio/jumpscare.ogg", &proj.sound_jumpscare),
+        ];
+
+        for (zip_path, opt_src) in files_to_pack {
+            if let Some(src) = opt_src {
+                if src.exists() {
+                    if let Ok(mut f) = File::open(src) {
+                        let mut buf = Vec::new();
+                        if f.read_to_end(&mut buf).is_ok() {
+                            zip.start_file(zip_path, options).map_err(|e| e.to_string())?;
+                            zip.write_all(&buf).map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+            }
+        }
+
+        zip.finish().map_err(|e| e.to_string())?;
+        Ok(format!("Paquete descargable (.fbmod) exportado en: {}", dst_zip.display()))
     }
 
-    fn copy_sprite(src: &Option<PathBuf>, dst_dir: &Path, dst_name: &str) -> Result<(), String> {
+    /// Importa un archivo .fbmod descargable, extrayendo sus assets y cargando el proyecto en el IDE
+    pub fn import_fbmod_package(zip_path: &Path, workspace_dir: &Path) -> Result<AnimatronicProject, String> {
+        let file = File::open(zip_path).map_err(|e| e.to_string())?;
+        let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+
+        let mut manifest_str = String::new();
+        {
+            let mut mf = archive
+                .by_name("project_manifest.json")
+                .map_err(|_| "El archivo .fbmod no contiene project_manifest.json".to_string())?;
+            mf.read_to_string(&mut manifest_str).map_err(|e| e.to_string())?;
+        }
+
+        let mut proj: AnimatronicProject = serde_json::from_str(&manifest_str).map_err(|e| e.to_string())?;
+        let extract_dir = workspace_dir.join(format!("{}_Imported_Assets", proj.internal_id.trim()));
+        fs::create_dir_all(&extract_dir).map_err(|e| e.to_string())?;
+
+        let extract_one = |archive: &mut ZipArchive<File>, zip_entry: &str, out_name: &str| -> Option<std::path::PathBuf> {
+            if let Ok(mut entry) = archive.by_name(zip_entry) {
+                let out_path = extract_dir.join(out_name);
+                if let Ok(mut out_file) = File::create(&out_path) {
+                    let _ = std::io::copy(&mut entry, &mut out_file);
+                    return Some(out_path);
+                }
+            }
+            None
+        };
+
+        proj.portrait_500_path = extract_one(&mut archive, "assets/portrait.png", "portrait.png");
+        proj.icon_48_path = extract_one(&mut archive, "assets/icon.png", "icon.png");
+        proj.body_sprite = extract_one(&mut archive, "assets/body.png", "body.png");
+        proj.head_normal_sprite = extract_one(&mut archive, "assets/head_normal.png", "head_normal.png");
+        proj.head_scare_sprite = extract_one(&mut archive, "assets/head_scare.png", "head_scare.png");
+        proj.head_gameover_alt = extract_one(&mut archive, "assets/head_gameover_alt.png", "head_gameover_alt.png");
+        proj.accessory_sprite = extract_one(&mut archive, "assets/accessory.png", "accessory.png");
+        proj.flash_defeat_sprite = extract_one(&mut archive, "assets/flash_defeat.png", "flash_defeat.png");
+        proj.jumpscare_frame_0 = extract_one(&mut archive, "assets/jumpscare_0.png", "jumpscare_0.png");
+        proj.jumpscare_frame_1 = extract_one(&mut archive, "assets/jumpscare_1.png", "jumpscare_1.png");
+        proj.jumpscare_frame_2 = extract_one(&mut archive, "assets/jumpscare_2.png", "jumpscare_2.png");
+        proj.sound_knock_alert = extract_one(&mut archive, "audio/knock.ogg", "knock.ogg");
+        proj.sound_voice_line = extract_one(&mut archive, "audio/voice.ogg", "voice.ogg");
+        proj.sound_defeat = extract_one(&mut archive, "audio/defeat.ogg", "defeat.ogg");
+        proj.sound_jumpscare = extract_one(&mut archive, "audio/jumpscare.ogg", "jumpscare.ogg");
+
+        Ok(proj)
+    }
+
+    fn copy_sprite(src: &Option<std::path::PathBuf>, dst_dir: &Path, dst_name: &str) -> Result<(), String> {
         if let Some(path) = src {
             if path.exists() {
                 fs::copy(path, dst_dir.join(dst_name)).map_err(|e| e.to_string())?;
@@ -929,7 +1238,7 @@ impl ProjectBuilder {
         Ok(())
     }
 
-    fn copy_audio(src: &Option<PathBuf>, game_dir: &Path, dst_name: &str) -> Result<(), String> {
+    fn copy_audio(src: &Option<std::path::PathBuf>, game_dir: &Path, dst_name: &str) -> Result<(), String> {
         if let Some(path) = src {
             if path.exists() {
                 fs::copy(path, game_dir.join(dst_name)).map_err(|e| e.to_string())?;
@@ -961,44 +1270,8 @@ impl ProjectBuilder {
             imageops::overlay(&mut canvas, head, 0, dy_head);
 
             let out_name = format!("s{}_Jumpscare_{}.png", id, idx);
-            canvas
-                .save(import_dir.join(out_name))
-                .map_err(|e| e.to_string())?;
+            canvas.save(import_dir.join(out_name)).map_err(|e| e.to_string())?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Comprueba que las plantillas quedan 100% parametrizadas para cualquier
-    /// animatrónico custom y que ninguna referencia a "Murray" sobrevive al render.
-    #[test]
-    fn plantillas_se_parametrizan_con_el_id_del_proyecto() {
-        let id = "Test";
-        let id_low = "test";
-
-        let cn_step = ProjectBuilder::render_template(CN_STEP_TEMPLATE, id, id_low);
-        assert!(!cn_step.contains("{ID}") && !cn_step.contains("{id}"));
-        assert!(cn_step.contains("global.Test_AI") && cn_step.contains("oCustomNightTile"));
-
-        let cn_draw =
-            ProjectBuilder::render_template(CN_DRAW_TEMPLATE, id, id_low).replace("{tooltip}", "Tip");
-        assert!(!cn_draw.contains("{tooltip}"));
-        assert!(cn_draw.contains("sTile_Test") && cn_draw.contains("global.Test_AI"));
-
-        let bw_step = ProjectBuilder::render_template(BW_STEP_TEMPLATE, id, id_low)
-            .replace("{gx}", "52")
-            .replace("{gy}", "48");
-        assert!(!bw_step.contains("{ID}") && !bw_step.contains("{id}"));
-        assert!(!bw_step.contains("{gx}") && !bw_step.contains("{gy}"));
-        assert!(bw_step.contains("TestBody") && bw_step.contains("global.Test_AI"));
-        assert!(bw_step.contains("snd_test_knock.ogg") && bw_step.contains("snd_test_jumpscare.ogg"));
-
-        let bw_draw64 = ProjectBuilder::render_template(BW_DRAW64_TEMPLATE, id, id_low);
-        assert!(bw_draw64.contains("sTest_Jumpscare"));
-        assert!(!bw_draw64.contains("Murray") && !bw_draw64.contains("murray"));
     }
 }

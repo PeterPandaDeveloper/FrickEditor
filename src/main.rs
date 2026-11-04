@@ -1,10 +1,10 @@
 mod builder;
 mod models;
 
-use builder::ProjectBuilder;
+use builder::IdeBuilder;
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
-use models::AnimatronicProject;
+use models::{AnimatronicArchetype, AnimatronicProject, CountermeasureType};
 use rodio::{Decoder, OutputStream, Sink};
 use std::collections::HashMap;
 use std::fs::File;
@@ -177,6 +177,46 @@ impl eframe::App for FrickEditorApp {
                         }
                     }
 
+                    if ui.button(format!("{}  Exportar .fbmod", ic::UPLOAD_SIMPLE)).clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Frickbear Mod Package", &["fbmod"])
+                            .set_file_name(format!("{}.fbmod", self.project.internal_id))
+                            .save_file()
+                        {
+                            match IdeBuilder::export_fbmod_package(&self.project, &path) {
+                                Ok(msg) => {
+                                    self.status_is_error = false;
+                                    self.status_message = msg;
+                                }
+                                Err(err) => {
+                                    self.status_is_error = true;
+                                    self.status_message = err;
+                                }
+                            }
+                        }
+                    }
+
+                    if ui.button(format!("{}  Importar .fbmod", ic::DOWNLOAD_SIMPLE)).clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Frickbear Mod Package", &["fbmod", "zip"])
+                            .pick_file()
+                        {
+                            let ws = self.project.workspace_dir.clone();
+                            match IdeBuilder::import_fbmod_package(&path, &ws) {
+                                Ok(loaded_proj) => {
+                                    self.project = loaded_proj;
+                                    self.tex_cache.clear();
+                                    self.status_is_error = false;
+                                    self.status_message = "Paquete .fbmod importado y descomprimido con éxito.".to_string();
+                                }
+                                Err(err) => {
+                                    self.status_is_error = true;
+                                    self.status_message = err;
+                                }
+                            }
+                        }
+                    }
+
                     let (ready, total) = self.project.readiness_score();
                     let badge_col = if ready == total {
                         Color32::from_rgb(65, 195, 105)
@@ -240,7 +280,21 @@ impl eframe::App for FrickEditorApp {
                 .min_size(Vec2::new(340.0, 38.0));
 
                 if ui.add(btn).clicked() {
-                    match ProjectBuilder::build_all(&self.project) {
+                    match IdeBuilder::build_full_ide_project(&self.project) {
+                        Ok(msg) => {
+                            self.status_is_error = false;
+                            self.status_message = msg;
+                        }
+                        Err(err) => {
+                            self.status_is_error = true;
+                            self.status_message = err;
+                        }
+                    }
+                }
+
+                ui.add_space(10.0);
+                if ui.button(format!("{}  Limpiar del juego", ic::BROOM)).clicked() {
+                    match IdeBuilder::clean_from_game(&self.project) {
                         Ok(msg) => {
                             self.status_is_error = false;
                             self.status_message = msg;
@@ -466,12 +520,12 @@ impl FrickEditorApp {
             );
             cols[0].add_space(6.0);
 
-            let g_tex = self.project.accessory_glasses_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 96));
+            let g_tex = self.project.accessory_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 96));
             Self::asset_card_row(
                 &mut cols[0],
                 "4. Gafas Clicables (s<ID>_Glasses)",
                 "USO: DrawDepth=52. Recibe el clic exclusivo del ratón y sale disparada con gravedad.",
-                &mut self.project.accessory_glasses_sprite,
+                &mut self.project.accessory_sprite,
                 g_tex,
             );
             cols[0].add_space(6.0);
@@ -533,16 +587,20 @@ impl FrickEditorApp {
             cols[1].heading(format!("{}  Audios (.ogg) con Probador Integrado", ic::SPEAKER_HIGH));
             cols[1].add_space(6.0);
 
-            let k1 = self.project.sound_knock.clone();
+            let k1 = self.project.sound_knock_alert.clone();
             self.audio_card_row(&mut cols[1], "1. Golpe en Ventana (murray_knock.ogg)", "Suena al entrar al Estado 1", k1, 1);
             cols[1].add_space(6.0);
 
-            let k2 = self.project.sound_voice_arrive.clone();
+            let k2 = self.project.sound_voice_line.clone();
             self.audio_card_row(&mut cols[1], "2. Frase al Abrir Persiana (murray_amigable.ogg)", "Saludo al levantar la persiana izquierda", k2, 2);
             cols[1].add_space(6.0);
 
             let k3 = self.project.sound_defeat.clone();
             self.audio_card_row(&mut cols[1], "3. Caída Cómica de Alce (murray_knock2.ogg)", "Suena al flashearlo sin lentes", k3, 3);
+            cols[1].add_space(6.0);
+
+            let k4 = self.project.sound_jumpscare.clone();
+            self.audio_card_row(&mut cols[1], "4. Jumpscare (murray_jumpscare.ogg)", "Suena durante el ataque Draw_64", k4, 4);
         });
     }
 
@@ -566,7 +624,7 @@ impl FrickEditorApp {
         let body_t = self.project.body_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
         let head_t = self.project.head_normal_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
         let scare_t = self.project.head_scare_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
-        let glass_t = self.project.accessory_glasses_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 128));
+        let glass_t = self.project.accessory_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 128));
         let flash_t = self.project.flash_defeat_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
         let j0_t = self.project.jumpscare_frame_0.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
         let j1_t = self.project.jumpscare_frame_1.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
@@ -597,8 +655,8 @@ impl FrickEditorApp {
                     painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                 }
                 if let Some(tex) = &glass_t {
-                    let gx = center.x + (self.project.mechanics.glasses_offset_x as f32 - 52.0);
-                    let gy = center.y - 8.0 + bob_head + (self.project.mechanics.glasses_offset_y as f32 - 48.0);
+                    let gx = center.x + (self.project.behavior.accessory_offset_x as f32 - 52.0);
+                    let gy = center.y - 8.0 + bob_head + (self.project.behavior.accessory_offset_y as f32 - 48.0);
                     let r = Rect::from_center_size(Pos2::new(gx, gy), Vec2::new(76.0, 30.0));
                     painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                     // Dibujar recuadro verde del Hitbox exclusivo de las gafas
@@ -678,10 +736,10 @@ impl FrickEditorApp {
                         .spacing([6.0, 8.0])
                         .show(ui, |ui| {
                             for slot in 0..32 {
-                                let is_selected = self.project.mechanics.custom_night_slot_index == slot;
+                                let is_selected = self.project.custom_night.slot_index == slot;
                                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(40.0, 48.0), Sense::click());
                                 if resp.clicked() {
-                                    self.project.mechanics.custom_night_slot_index = slot;
+                                    self.project.custom_night.slot_index = slot;
                                 }
 
                                 let p = ui.painter_at(rect);
@@ -717,13 +775,13 @@ impl FrickEditorApp {
                         });
                 });
 
-            let (tx, ty) = self.project.mechanics.slot_to_xy();
+            let (tx, ty) = self.project.custom_night.slot_to_xy();
             cols[0].add_space(6.0);
             cols[0].label(
                 RichText::new(format!(
                     "{} Casilla seleccionada: Slot #{}  ->  Coordenadas en GML: tile_x = {}, tile_y = {}",
                     ic::CHECK_CIRCLE,
-                    self.project.mechanics.custom_night_slot_index + 1,
+                    self.project.custom_night.slot_index + 1,
                     tx,
                     ty
                 ))
@@ -731,35 +789,51 @@ impl FrickEditorApp {
                 .strong(),
             );
 
-            // Columna Derecha: Parámetros de IA, Tiempos y Textos In-Game
+            // Columna Derecha: Parámetros de IA, 4 Layers Down y Textos
             cols[1].heading(format!("{}  Parámetros de IA, 4 Layers Down y Textos", ic::SLIDERS_HORIZONTAL));
             cols[1].add_space(6.0);
 
+            egui::ComboBox::from_label("Arquetipo de Comportamiento")
+                .selected_text(self.project.behavior.archetype.display_name())
+                .show_ui(&mut cols[1], |ui| {
+                    for arch in AnimatronicArchetype::all() {
+                        ui.selectable_value(&mut self.project.behavior.archetype, arch, arch.display_name());
+                    }
+                });
+            egui::ComboBox::from_label("Contra-medida de Defensa")
+                .selected_text(self.project.behavior.countermeasure.display_name())
+                .show_ui(&mut cols[1], |ui| {
+                    for cm in CountermeasureType::all() {
+                        ui.selectable_value(&mut self.project.behavior.countermeasure, cm, cm.display_name());
+                    }
+                });
+            cols[1].separator();
+            cols[1].add_space(4.0);
             cols[1].add(
-                egui::Slider::new(&mut self.project.mechanics.endless_default_ai, 1..=20)
+                egui::Slider::new(&mut self.project.behavior.endless_mode_ai, 1..=20)
                     .text("IA Automática en Modo Endless"),
             );
             cols[1].add(
-                egui::Slider::new(&mut self.project.mechanics.four_layers_down_ai, 1..=20)
+                egui::Slider::new(&mut self.project.behavior.four_layers_down_ai, 1..=20)
                     .text("IA Automática en Four Layers Down"),
             );
             cols[1].add(
-                egui::Slider::new(&mut self.project.mechanics.attack_frames_ai20, 120..=600)
+                egui::Slider::new(&mut self.project.behavior.attack_window_frames_ai20, 120..=600)
                     .text("Frames para Atacar en IA 20 (320 = 5.3s)"),
             );
             cols[1].add(
-                egui::Slider::new(&mut self.project.mechanics.glasses_offset_x, 0..=120)
+                egui::Slider::new(&mut self.project.behavior.accessory_offset_x, 0..=120)
                     .text("Offset X de Gafas sobre la cabeza"),
             );
             cols[1].add(
-                egui::Slider::new(&mut self.project.mechanics.glasses_offset_y, 0..=120)
+                egui::Slider::new(&mut self.project.behavior.accessory_offset_y, 0..=120)
                     .text("Offset Y de Gafas sobre la cabeza"),
             );
 
             cols[1].add_space(8.0);
             cols[1].label(RichText::new("Descripción emergente en Custom Night (Tooltip):").strong());
             cols[1].add(
-                egui::TextEdit::multiline(&mut self.project.mechanics.custom_night_tooltip)
+                egui::TextEdit::multiline(&mut self.project.custom_night.cursor_tooltip)
                     .desired_rows(3)
                     .desired_width(f32::INFINITY),
             );
@@ -767,7 +841,7 @@ impl FrickEditorApp {
             cols[1].add_space(6.0);
             cols[1].label(RichText::new("Consejo en Pantalla de Muerte (Game Over Tip):").strong());
             cols[1].add(
-                egui::TextEdit::multiline(&mut self.project.mechanics.gameover_tip)
+                egui::TextEdit::multiline(&mut self.project.custom_night.gameover_tip)
                     .desired_rows(2)
                     .desired_width(f32::INFINITY),
             );
@@ -875,9 +949,10 @@ impl FrickEditorApp {
                         if ui.button(ic::FOLDER_OPEN).clicked() {
                             if let Some(path) = rfd::FileDialog::new().add_filter("OGG/WAV", &["ogg", "wav"]).pick_file() {
                                 match slot_id {
-                                    1 => self.project.sound_knock = Some(path),
-                                    2 => self.project.sound_voice_arrive = Some(path),
-                                    _ => self.project.sound_defeat = Some(path),
+                                    1 => self.project.sound_knock_alert = Some(path),
+                                    2 => self.project.sound_voice_line = Some(path),
+                                    3 => self.project.sound_defeat = Some(path),
+                                    _ => self.project.sound_jumpscare = Some(path),
                                 }
                             }
                         }

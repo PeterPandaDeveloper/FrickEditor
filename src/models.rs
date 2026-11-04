@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -27,59 +28,256 @@ impl Default for ExtrasInfoJson {
     }
 }
 
-/// Configuración de orden en la Página de Mods (Custom Night) y balanceo de IA
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MechanicsAndGridConfig {
-    /// Índice del slot en la Página 2 de Custom Night (0 = primero arriba a la izquierda)
-    pub custom_night_slot_index: usize,
-    /// Tooltip que aparece al pasar el ratón en Custom Night
-    pub custom_night_tooltip: String,
-    /// Consejo en la pantalla de Game Over
-    pub gameover_tip: String,
-    /// Nivel de IA automático en modo Endless (1..20)
-    pub endless_default_ai: u8,
-    /// Nivel de IA automático en campaña Four Layers Down (1..20)
-    pub four_layers_down_ai: u8,
-    /// Segundos base para atacar con IA = 1 vs IA = 20
-    pub attack_frames_ai1: i32,
-    pub attack_frames_ai20: i32,
-    /// Segundos mínimos y máximos para tocar la ventana con IA = 20
-    pub knock_min_frames_ai20: i32,
-    pub knock_max_frames_ai20: i32,
-    /// Offset del accesorio clicable (gafas) respecto a la cabeza
-    pub glasses_offset_x: i32,
-    pub glasses_offset_y: i32,
+/// Arquetipos de comportamiento soportados por el motor (Fase 1 + 2 auditadas).
+/// Cada arquetipo define dónde aparece el animatrónico en la oficina y cómo
+/// bloquea su avance (puerta, persiana, máscara, etc.).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimatronicArchetype {
+    /// Ventana trasera con persianas (Murray Moose, golden_master_v26)
+    BackWindowBlinds,
+    /// Puerta del pasillo (se detiene con la puerta cerrada)
+    HallwayDoorway,
+    /// Sistema de ventilación (se desplaza por las rejillas)
+    VentSystemCrawler,
+    /// Ventana delantera con cristal
+    FrontWindowGlass,
+    /// Manifiesta en la propia oficina (aparición directa)
+    OfficeManifest,
+    /// Consola de la pared trasera (requiere tarea de consola)
+    BackWallConsole,
 }
 
-impl Default for MechanicsAndGridConfig {
+impl Default for AnimatronicArchetype {
     fn default() -> Self {
-        Self {
-            custom_night_slot_index: 0,
-            custom_night_tooltip: "Murray Moose: He knocks and opens the back-left window blind. Click directly on his sunglasses to snatch them off, then flash him while he is startled!".to_string(),
-            gameover_tip: "Murray Moose: Click directly on his sunglasses to remove them, then flash him!".to_string(),
-            endless_default_ai: 10,
-            four_layers_down_ai: 12,
-            attack_frames_ai1: 600,  // 10.0s a 60 FPS
-            attack_frames_ai20: 320, // 5.3s a 60 FPS
-            knock_min_frames_ai20: 180,
-            knock_max_frames_ai20: 360,
-            glasses_offset_x: 52,
-            glasses_offset_y: 48,
+        Self::BackWindowBlinds
+    }
+}
+
+impl AnimatronicArchetype {
+    pub fn all() -> [Self; 6] {
+        [
+            Self::BackWindowBlinds,
+            Self::HallwayDoorway,
+            Self::VentSystemCrawler,
+            Self::FrontWindowGlass,
+            Self::OfficeManifest,
+            Self::BackWallConsole,
+        ]
+    }
+
+    /// Punto (cx, cy) de aparición del animatrónico dentro de la oficina
+    /// (coordenadas del ROI 640x360). `use_right_side` invierte el eje X.
+    pub fn default_coordinates(&self, use_right_side: bool) -> (i32, i32) {
+        let x = match self {
+            Self::BackWindowBlinds => 116,
+            Self::HallwayDoorway => 560,
+            Self::VentSystemCrawler => 320,
+            Self::FrontWindowGlass => 116,
+            Self::OfficeManifest => 320,
+            Self::BackWallConsole => 560,
+        };
+        let y = match self {
+            Self::BackWindowBlinds => 96,
+            Self::HallwayDoorway => 120,
+            Self::VentSystemCrawler => 300,
+            Self::FrontWindowGlass => 320,
+            Self::OfficeManifest => 200,
+            Self::BackWallConsole => 120,
+        };
+        if use_right_side {
+            (640 - x, y)
+        } else {
+            (x, y)
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::BackWindowBlinds => "Back Window (Blinds)",
+            Self::HallwayDoorway => "Hallway (Doorway)",
+            Self::VentSystemCrawler => "Vent System (Crawler)",
+            Self::FrontWindowGlass => "Front Window (Glass)",
+            Self::OfficeManifest => "Office (Manifest)",
+            Self::BackWallConsole => "Back Wall (Console)",
         }
     }
 }
 
-impl MechanicsAndGridConfig {
+/// Contra-medidas que derrotan a cada animatrónico. La condición exacta se
+/// renderiza en el GML del `Step_0` según el arquetipo seleccionado.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountermeasureType {
+    /// Quitar el accesorio (gafas) y después alumbrarlo
+    RemoveAccessoryThenFlash,
+    /// Alumbrarlo directamente con la linterna
+    DirectFlashlight,
+    /// NO alumbrarlo (se acerca si lo alumbras)
+    DoNotFlashLight,
+    /// Cerrar la puerta o la persiana
+    CloseDoorOrBlind,
+    /// Ponerse la máscara de Fredbear
+    WearFreddyMask,
+    /// Atraerlo con audio o electrocutarlo
+    AudioLureOrShock,
+    /// Resolver la tarea de la consola trasera
+    SolveBackConsoleTask,
+}
+
+impl Default for CountermeasureType {
+    fn default() -> Self {
+        Self::RemoveAccessoryThenFlash
+    }
+}
+
+impl CountermeasureType {
+    pub fn all() -> [Self; 7] {
+        [
+            Self::RemoveAccessoryThenFlash,
+            Self::DirectFlashlight,
+            Self::DoNotFlashLight,
+            Self::CloseDoorOrBlind,
+            Self::WearFreddyMask,
+            Self::AudioLureOrShock,
+            Self::SolveBackConsoleTask,
+        ]
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::RemoveAccessoryThenFlash => "Remove Accessory + Flash",
+            Self::DirectFlashlight => "Direct Flashlight",
+            Self::DoNotFlashLight => "Do Not Flash Light",
+            Self::CloseDoorOrBlind => "Close Door / Blind",
+            Self::WearFreddyMask => "Wear Freddy Mask",
+            Self::AudioLureOrShock => "Audio Lure / Shock",
+            Self::SolveBackConsoleTask => "Solve Back Console Task",
+        }
+    }
+}
+
+/// Comportamiento de IA y animación del animatrónico (100% parametrizado por ID).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BehaviorConfig {
+    pub archetype: AnimatronicArchetype,
+    pub countermeasure: CountermeasureType,
+    /// Si aparece en el lado derecho de la oficina (invierte cx/cy)
+    pub use_right_side: bool,
+    pub appear_in_four_layers_down: bool,
+    pub four_layers_down_ai: i32,
+    pub appear_in_endless_mode: bool,
+    pub endless_mode_ai: i32,
+    /// Frames que tarda en atacar con IA = 1 (60 FPS)
+    pub attack_window_frames_ai1: i32,
+    /// Frames que tarda en atacar con IA = 20 (60 FPS)
+    pub attack_window_frames_ai20: i32,
+    pub move_min_frames_ai1: i32,
+    pub move_min_frames_ai20: i32,
+    pub move_max_frames_ai1: i32,
+    pub move_max_frames_ai20: i32,
+    /// Offsets de dibujo de cada capa en el ROI de la oficina
+    pub body_offset_x: i32,
+    pub body_offset_y: i32,
+    pub head_offset_x: i32,
+    pub head_offset_y: i32,
+    /// Offset del accesorio clicable (gafas) respecto a la cabeza
+    pub accessory_offset_x: i32,
+    pub accessory_offset_y: i32,
+    /// Hitbox del accesorio clicable en GML
+    pub accessory_hitbox_w: i32,
+    pub accessory_hitbox_h: i32,
+    /// Si se queda bloqueado cuando la puerta/persiana está cerrada
+    pub stalls_when_blocked: bool,
+    /// Si se puede comprar con Death Coin en el gestor de mods
+    pub allow_death_coin: bool,
+    /// Si abre la persiana al llegar (arquetipo BackWindowBlinds)
+    pub opens_blind_on_arrival: bool,
+    /// Cola de ventana sincronizada con Sun/Moon (evita multi-mod en la ventana)
+    pub smart_queue_sun_moon: bool,
+    /// Tokens que otorga al derrotarlo
+    pub token_reward_on_defeat: i32,
+    /// Overrides GML manuales: nombre de archivo -> código (reemplaza a los generados)
+    pub custom_gml_overrides: BTreeMap<String, String>,
+}
+
+impl Default for BehaviorConfig {
+    fn default() -> Self {
+        Self {
+            archetype: AnimatronicArchetype::default(),
+            countermeasure: CountermeasureType::default(),
+            use_right_side: false,
+            appear_in_four_layers_down: true,
+            four_layers_down_ai: 12,
+            appear_in_endless_mode: true,
+            endless_mode_ai: 10,
+            attack_window_frames_ai1: 600,
+            attack_window_frames_ai20: 320,
+            move_min_frames_ai1: 300,
+            move_min_frames_ai20: 180,
+            move_max_frames_ai1: 600,
+            move_max_frames_ai20: 360,
+            body_offset_x: 0,
+            body_offset_y: 0,
+            head_offset_x: 0,
+            head_offset_y: 0,
+            accessory_offset_x: 52,
+            accessory_offset_y: 48,
+            accessory_hitbox_w: 76,
+            accessory_hitbox_h: 30,
+            stalls_when_blocked: false,
+            allow_death_coin: true,
+            opens_blind_on_arrival: false,
+            smart_queue_sun_moon: true,
+            token_reward_on_defeat: 3,
+            custom_gml_overrides: BTreeMap::new(),
+        }
+    }
+}
+
+/// Configuración de la Custom Night (Página de Mods) y los textos in-game
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CustomNightConfig {
+    /// Índice del slot en la Página 2 de Custom Night (0 = primero arriba a la izquierda)
+    pub slot_index: usize,
+    /// Tooltip que aparece al pasar el ratón en Custom Night
+    pub cursor_tooltip: String,
+    /// Consejo en la pantalla de Game Over
+    pub gameover_tip: String,
+    /// Ubicación mostrada en el gestor de revisiones del menú de pausa
+    pub pause_review_location: String,
+    /// Descripción mostrada en el gestor de revisiones del menú de pausa
+    pub pause_review_description: String,
+}
+
+impl Default for CustomNightConfig {
+    fn default() -> Self {
+        Self {
+            slot_index: 0,
+            cursor_tooltip: "Murray Moose: He knocks and opens the back-left window blind. Click directly on his sunglasses to snatch them off, then flash him while he is startled!".to_string(),
+            gameover_tip: "Murray Moose: Click directly on his sunglasses to remove them, then flash him!".to_string(),
+            pause_review_location: "Back-left window (office)".to_string(),
+            pause_review_description: "Murray knocks 3 times before lifting the blind. Remove his glasses and flash him to earn tokens.".to_string(),
+        }
+    }
+}
+
+impl CustomNightConfig {
     /// Convierte el número de orden (Slot 0..31) en coordenadas exactas (tile_x, tile_y)
     /// de la Página 2 de Custom Night. La grilla nativa es de 8 columnas x 4 filas (32 slots),
     /// con paso de 54 px en X y 72 px en Y (ver golden_master_v26).
     pub fn slot_to_xy(&self) -> (i32, i32) {
-        let col = (self.custom_night_slot_index % 8) as i32;
-        let row = (self.custom_night_slot_index / 8) as i32;
+        let col = (self.slot_index % 8) as i32;
+        let row = (self.slot_index / 8) as i32;
         let x = 32 + (col * 54);
         let y = 12 + (row * 72);
         (x, y)
     }
+}
+
+/// Sprite extra opcional exportado como `s<ID>_<sprite_suffix>_0.png`
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExtraSprite {
+    pub sprite_suffix: String,
+    pub path: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -89,28 +287,32 @@ pub struct AnimatronicProject {
     pub workspace_dir: PathBuf,
     pub utmt_scripts_dir: PathBuf,
     pub gallery_info: ExtrasInfoJson,
-    pub mechanics: MechanicsAndGridConfig,
+    pub behavior: BehaviorConfig,
+    pub custom_night: CustomNightConfig,
 
     // --- Galería y Custom Night Tile ---
     pub portrait_500_path: Option<PathBuf>,
     pub icon_48_path: Option<PathBuf>,
     pub auto_generate_gray_tile: bool,
+    pub icon_gray_override_path: Option<PathBuf>,
 
     // --- Sprites de Oficina y Jumpscare ---
     pub body_sprite: Option<PathBuf>,
     pub head_normal_sprite: Option<PathBuf>,
     pub head_scare_sprite: Option<PathBuf>,
     pub head_gameover_alt: Option<PathBuf>,
-    pub accessory_glasses_sprite: Option<PathBuf>,
+    pub accessory_sprite: Option<PathBuf>,
     pub flash_defeat_sprite: Option<PathBuf>,
+    pub extra_sprites: Vec<ExtraSprite>,
     pub jumpscare_frame_0: Option<PathBuf>,
     pub jumpscare_frame_1: Option<PathBuf>,
     pub jumpscare_frame_2: Option<PathBuf>,
 
     // --- Audios (.ogg) ---
-    pub sound_knock: Option<PathBuf>,
-    pub sound_voice_arrive: Option<PathBuf>,
+    pub sound_knock_alert: Option<PathBuf>,
+    pub sound_voice_line: Option<PathBuf>,
     pub sound_defeat: Option<PathBuf>,
+    pub sound_jumpscare: Option<PathBuf>,
 }
 
 impl Default for AnimatronicProject {
@@ -127,49 +329,60 @@ impl Default for AnimatronicProject {
             workspace_dir: PathBuf::from(r"D:\Frickbears-mod"),
             utmt_scripts_dir: PathBuf::from(r"D:\UndertaleModTool_v0.9.2.0-Windows-SingleFile\Scripts"),
             gallery_info: ExtrasInfoJson::default(),
-            mechanics: MechanicsAndGridConfig::default(),
+            behavior: BehaviorConfig::default(),
+            custom_night: CustomNightConfig::default(),
             portrait_500_path: auto_file("FB_Murray_Moose.png"),
             icon_48_path: auto_file("sTile_Murray_0.png"),
             auto_generate_gray_tile: true,
+            icon_gray_override_path: None,
             body_sprite: auto_file("sMurray_body.png"),
             head_normal_sprite: auto_file("sMurray_head.png"),
             head_scare_sprite: auto_file("sMurray_head_Scare.png"),
             head_gameover_alt: auto_file("sMurray_head_Alt.png"),
-            accessory_glasses_sprite: auto_file("sMurray_Glasses.png"),
+            accessory_sprite: auto_file("sMurray_Glasses.png"),
             flash_defeat_sprite: auto_file("sMurray_Flash.png"),
+            extra_sprites: Vec::new(),
             jumpscare_frame_0: auto_file("sJumpscare_Murray_0.png"),
             jumpscare_frame_1: auto_file("sJumpscare_Murray_1.png"),
             jumpscare_frame_2: auto_file("sJumpscare_Murray_2.png"),
-            sound_knock: auto_file("murray_knock.ogg"),
-            sound_voice_arrive: auto_file("murray_amigable.ogg"),
+            sound_knock_alert: auto_file("murray_knock.ogg"),
+            sound_voice_line: auto_file("murray_amigable.ogg"),
             sound_defeat: auto_file("murray_knock2.ogg"),
+            sound_jumpscare: auto_file("murray_jumpscare.ogg"),
         }
     }
 }
 
 impl AnimatronicProject {
     pub fn readiness_score(&self) -> (usize, usize) {
-        let checks = [
+        let checks: Vec<&Option<PathBuf>> = vec![
             &self.portrait_500_path,
             &self.icon_48_path,
             &self.body_sprite,
             &self.head_normal_sprite,
             &self.head_scare_sprite,
             &self.head_gameover_alt,
-            &self.accessory_glasses_sprite,
+            &self.accessory_sprite,
             &self.flash_defeat_sprite,
             &self.jumpscare_frame_0,
             &self.jumpscare_frame_1,
             &self.jumpscare_frame_2,
-            &self.sound_knock,
-            &self.sound_voice_arrive,
+            &self.sound_knock_alert,
+            &self.sound_voice_line,
             &self.sound_defeat,
+            &self.sound_jumpscare,
         ];
-        let total = checks.len();
-        let ready = checks
+        let mut total = checks.len();
+        let mut ready = checks
             .iter()
             .filter(|opt| opt.as_ref().map(|p| p.exists()).unwrap_or(false))
             .count();
+        for extra in &self.extra_sprites {
+            total += 1;
+            if extra.path.exists() {
+                ready += 1;
+            }
+        }
         (ready, total)
     }
 }
