@@ -2,7 +2,7 @@ mod builder;
 mod models;
 
 use builder::ProjectBuilder;
-use eframe::egui::{self, Color32, ColorImage, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
+use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
 use models::AnimatronicProject;
 use rodio::{Decoder, OutputStream, Sink};
@@ -270,7 +270,7 @@ impl eframe::App for FrickEditorApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::Frame::group(ui.style())
                 .fill(Color32::from_rgb(27, 30, 37))
-                .corner_radius(CornerRadius::same(6))
+                .rounding(Rounding::same(6.0))
                 .inner_margin(8.0)
                 .show(ui, |ui| {
                     ui.columns(3, |cols| {
@@ -374,13 +374,13 @@ impl FrickEditorApp {
 
             egui::Frame::group(cols[1].style())
                 .fill(Color32::from_rgb(12, 12, 16))
-                .stroke(Stroke::new(1.5, Color32::from_rgb(190, 190, 190)))
+                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(190, 190, 190)))
                 .inner_margin(14.0)
                 .show(&mut cols[1], |ui| {
                     ui.horizontal(|ui| {
-                        egui::Frame::NONE
+                        egui::Frame::none()
                             .fill(Color32::from_rgb(192, 192, 192))
-                            .stroke(Stroke::new(1.0, Color32::WHITE))
+                            .stroke(Stroke::new(1.0_f32, Color32::WHITE))
                             .inner_margin(2.0)
                             .show(ui, |ui| {
                                 if let Some(tex) = &i_tex {
@@ -578,7 +578,7 @@ impl FrickEditorApp {
 
         // Marco de la ventana trasera de la oficina
         painter.rect_filled(rect, 6.0, Color32::from_rgb(10, 12, 16));
-        painter.rect_stroke(rect, 6.0, Stroke::new(3.0, Color32::from_rgb(90, 95, 110)), egui::StrokeKind::Inside);
+        painter.rect_stroke(rect, 6.0, Stroke::new(3.0_f32, Color32::from_rgb(90, 95, 110)));
 
         let center = rect.center();
         let t = self.sim_time;
@@ -602,7 +602,7 @@ impl FrickEditorApp {
                     let r = Rect::from_center_size(Pos2::new(gx, gy), Vec2::new(76.0, 30.0));
                     painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                     // Dibujar recuadro verde del Hitbox exclusivo de las gafas
-                    painter.rect_stroke(r, 2.0, Stroke::new(1.5, Color32::from_rgb(50, 220, 100)), egui::StrokeKind::Outside);
+                    painter.rect_stroke(r, 2.0, Stroke::new(1.5_f32, Color32::from_rgb(50, 220, 100)));
                 }
             }
             PreviewState::ScaredNoGlasses => {
@@ -664,20 +664,20 @@ impl FrickEditorApp {
         let icon_tex = self.project.icon_48_path.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 96));
 
         ui.columns(2, |cols| {
-            // Columna Izquierda: Selector Visual de Orden en la Página de Mods (50 Slots = 10x5)
+            // Columna Izquierda: Selector Visual de Orden en la Página de Mods (32 Slots = 8x4)
             cols[0].heading(format!("{}  Posición y Orden del Tile en la Página de Mods", ic::GRID_FOUR));
-            cols[0].label("Haz clic en cualquier casilla para elegir en qué orden aparece el animatrónico en la Página 2:");
+            cols[0].label("Haz clic en cualquier casilla para elegir en qué orden aparece el animatrónico en la Página 2 (grilla nativa 8x4):");
             cols[0].add_space(8.0);
 
             egui::Frame::group(cols[0].style())
                 .fill(Color32::BLACK)
-                .stroke(Stroke::new(1.5, Color32::from_gray(160)))
+                .stroke(Stroke::new(1.5_f32, Color32::from_gray(160)))
                 .inner_margin(10.0)
                 .show(&mut cols[0], |ui| {
                     egui::Grid::new("custom_night_page2_grid")
                         .spacing([6.0, 8.0])
                         .show(ui, |ui| {
-                            for slot in 0..30 {
+                            for slot in 0..32 {
                                 let is_selected = self.project.mechanics.custom_night_slot_index == slot;
                                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(40.0, 48.0), Sense::click());
                                 if resp.clicked() {
@@ -699,7 +699,7 @@ impl FrickEditorApp {
                                         let img_r = Rect::from_min_size(rect.min + Vec2::new(2.0, 2.0), Vec2::new(36.0, 36.0));
                                         p.image(tex.id(), img_r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                                     }
-                                    p.rect_stroke(rect, 3.0, Stroke::new(2.0, Color32::YELLOW), egui::StrokeKind::Outside);
+                                    p.rect_stroke(rect, 3.0, Stroke::new(2.0_f32, Color32::YELLOW));
                                 } else {
                                     p.text(
                                         rect.center(),
@@ -710,7 +710,7 @@ impl FrickEditorApp {
                                     );
                                 }
 
-                                if (slot + 1) % 10 == 0 {
+                                if (slot + 1) % 8 == 0 {
                                     ui.end_row();
                                 }
                             }
@@ -793,14 +793,14 @@ impl FrickEditorApp {
 
         egui::Frame::group(ui.style())
             .fill(Color32::from_rgb(28, 31, 38))
-            .stroke(Stroke::new(1.0, border_col))
-            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0_f32, border_col))
+            .rounding(Rounding::same(6.0))
             .inner_margin(8.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    egui::Frame::NONE
+                    egui::Frame::none()
                         .fill(Color32::from_rgb(16, 18, 22))
-                        .corner_radius(CornerRadius::same(4))
+                        .rounding(Rounding::same(4.0))
                         .show(ui, |ui| {
                             if let Some(tex) = thumb {
                                 ui.add(egui::Image::new(&tex).fit_to_exact_size(Vec2::new(42.0, 42.0)));
@@ -859,8 +859,8 @@ impl FrickEditorApp {
 
         egui::Frame::group(ui.style())
             .fill(Color32::from_rgb(28, 31, 38))
-            .stroke(Stroke::new(1.0, border_col))
-            .corner_radius(CornerRadius::same(6))
+            .stroke(Stroke::new(1.0_f32, border_col))
+            .rounding(Rounding::same(6.0))
             .inner_margin(8.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {

@@ -1,7 +1,7 @@
 use crate::models::AnimatronicProject;
 use image::{imageops, DynamicImage, ImageBuffer, Rgba};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct ProjectBuilder;
 
@@ -20,7 +20,7 @@ impl ProjectBuilder {
         if skin_dir.exists() {
             let _ = fs::remove_dir_all(&skin_dir);
         }
-        let bad_render = addon_dir.join("FB_Murray_Moose.png");
+        let bad_render = addon_dir.join(format!("FB_{}_Moose.png", id));
         if bad_render.exists() {
             let _ = fs::remove_file(&bad_render);
         }
@@ -100,15 +100,16 @@ impl ProjectBuilder {
         let (tile_x, tile_y) = proj.mechanics.slot_to_xy();
 
         // Generar Create_0 del Tile en la posición exacta del Slot elegido
+        // Constantes del botón PAGE 1/2 tomadas del golden_master_v26 (funciona en producción)
         let cn_create = format!(
             "// Generado por FrickEditor Studio — Slot #{slot}\n\
              depth = -1000;\n\
              if (!variable_global_exists(\"{id}_AI\")) global.{id}_AI = 0;\n\
              if (!variable_global_exists(\"CustomNight_Page\")) global.CustomNight_Page = 0;\n\
-             btn_page_x = 382;\n\
-             btn_page_y = 332;\n\
-             btn_page_w = 88;\n\
-             btn_page_h = 24;\n\
+             btn_page_x = 344;\n\
+             btn_page_y = 326;\n\
+             btn_page_w = 110;\n\
+             btn_page_h = 26;\n\
              tile_x = {tx};\n\
              tile_y = {ty};\n\
              prev_freddy_ai = -1;\n",
@@ -123,14 +124,20 @@ impl ProjectBuilder {
         )
         .map_err(|e| e.to_string())?;
 
-        // Generar Create_0 de la Oficina con los parámetros de IA y 4LD/Endless
+        // Generar Create_0 de la Oficina con los parámetros de IA y 4LD/Endless.
+        // Reproduce la inicialización completa del golden_master_v26 (Invariante #2),
+        // incluyendo tracking de tiempo de muerte y stream de jumpscare.
         let bw_create = format!(
             "// Generado por FrickEditor Studio — Invariante #2 Blindada\n\
              global.{id}Death = false;\n\
-             global.{id}_SavedTime = \"0:00.00\";\n\
              {id}Body = noone;\n\
              {id}Head = noone;\n\
              {id}Glasses = noone;\n\
+             survival_frames = 0;\n\
+             global.{id}_SavedTimeSeconds = 0;\n\
+             global.{id}_SavedTime = \"0:00.00\";\n\
+             body_frame = 0;\n\
+             snd_jumpscare_stream = -1;\n\
              var ai = 0;\n\
              if (variable_global_exists(\"{id}_AI\")) ai = clamp(global.{id}_AI, 0, 20);\n\
              if (variable_global_exists(\"{id}_Disabled\") && global.{id}_Disabled) ai = 0;\n\
@@ -138,7 +145,6 @@ impl ProjectBuilder {
              else if (ai == 0 && variable_global_exists(\"FourLayersDown\") && global.FourLayersDown == true) ai = {fld_ai};\n\
              if (ai <= 0) {{ instance_destroy(); exit; }}\n\
              state = 0;\n\
-             survival_frames = 0;\n\
              attack_timer = round(lerp({atk1}, {atk20}, ai / 20.0));\n\
              knock_timer = irandom_range(round(lerp(480, {kmin}, ai / 20.0)), round(lerp(900, {kmax}, ai / 20.0)));\n\
              has_glasses = true;\n\
@@ -206,7 +212,7 @@ impl ProjectBuilder {
         for (idx, head, dy_body, dy_head) in configs {
             let mut canvas: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(640, 640);
             imageops::overlay(&mut canvas, &body, 0, dy_body);
-            imageops::overlay(&mut canvas, *head, 0, dy_head);
+            imageops::overlay(&mut canvas, head, 0, dy_head);
 
             let out_name = format!("s{}_Jumpscare_{}.png", id, idx);
             canvas
