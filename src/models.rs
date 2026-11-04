@@ -70,12 +70,14 @@ impl Default for MechanicsAndGridConfig {
 }
 
 impl MechanicsAndGridConfig {
-    /// Convierte el número de orden (Slot 0..49) en coordenadas exactas (tile_x, tile_y) de la grilla de Frickbear's
+    /// Convierte el número de orden (Slot 0..31) en coordenadas exactas (tile_x, tile_y)
+    /// de la Página 2 de Custom Night. La grilla nativa es de 8 columnas x 4 filas (32 slots),
+    /// con paso de 54 px en X y 72 px en Y (ver golden_master_v26).
     pub fn slot_to_xy(&self) -> (i32, i32) {
-        let col = (self.custom_night_slot_index % 10) as i32;
-        let row = (self.custom_night_slot_index / 10) as i32;
-        let x = 32 + (col * 44);
-        let y = 12 + (row * 68);
+        let col = (self.custom_night_slot_index % 8) as i32;
+        let row = (self.custom_night_slot_index / 8) as i32;
+        let x = 32 + (col * 54);
+        let y = 12 + (row * 72);
         (x, y)
     }
 }
