@@ -8,7 +8,7 @@ use launcher::GameLauncher;
 use mod_manager::ModManager;
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
-use models::{AnimatronicArchetype, AnimatronicProject, CountermeasureType};
+use models::{AnimatronicArchetype, AnimatronicProject, CameraRouteNode, CountermeasureType, EnvironmentEntity, MazePropType};
 use rodio::{Decoder, OutputStream, Sink};
 use std::collections::HashMap;
 use std::fs::File;
@@ -37,6 +37,8 @@ enum ActiveTab {
     SpritesAndGuide,
     LiveAnimationPreview,
     GridAndMechanics,
+    CameraMapRouter,
+    Environment3DBuilder,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -303,36 +305,51 @@ impl eframe::App for FrickEditorApp {
             ui.separator();
             ui.add_space(4.0);
 
-            // Las 5 Pestañas del Estudio
+            // Las 7 Pestañas del Estudio
             ui.horizontal(|ui| {
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::ModManager,
-                    RichText::new(format!("{}  0. Gestor de Mods & PLAY", ic::GAME_CONTROLLER)).size(14.0),
+                    RichText::new(format!("{}  0. Gestor de Mods & PLAY", ic::GAME_CONTROLLER)).size(13.0),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::Gallery,
-                    RichText::new(format!("{}  1. Mod Gallery & Bio", ic::IDENTIFICATION_CARD)).size(14.0),
+                    RichText::new(format!("{}  1. Mod Gallery", ic::IDENTIFICATION_CARD)).size(13.0),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::SpritesAndGuide,
-                    RichText::new(format!("{}  2. Sprites, Audios y Guía de Uso", ic::IMAGE)).size(14.0),
+                    RichText::new(format!("{}  2. Sprites & Audios", ic::IMAGE)).size(13.0),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::LiveAnimationPreview,
-                    RichText::new(format!("{}  3. Simulador de Animación en Vivo", ic::FILM_STRIP)).size(14.0),
+                    RichText::new(format!("{}  3. Animación 60 FPS", ic::FILM_STRIP)).size(13.0),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::GridAndMechanics,
-                    RichText::new(format!("{}  4. Orden de Tiles (Custom Night) & IA", ic::GRID_FOUR)).size(14.0),
+                    RichText::new(format!("{}  4. Cuadrícula & IA", ic::GRID_FOUR)).size(13.0),
+                );
+                ui.add_space(4.0);
+                ui.selectable_value(
+                    &mut self.active_tab,
+                    ActiveTab::CameraMapRouter,
+                    RichText::new(format!("{}  5. Ruteo de Cámaras", ic::MAP_TRIFOLD)).size(13.0),
+                );
+                ui.add_space(4.0);
+                ui.selectable_value(
+                    &mut self.active_tab,
+                    ActiveTab::Environment3DBuilder,
+                    RichText::new(format!("{}  6. Constructor 3D", ic::CUBE))
+                        .size(13.0)
+                        .color(Color32::from_rgb(110, 230, 255))
+                        .strong(),
                 );
             });
             ui.add_space(4.0);
@@ -433,6 +450,8 @@ impl eframe::App for FrickEditorApp {
                 ActiveTab::SpritesAndGuide => self.ui_sprites_and_audio_tab(ctx, ui),
                 ActiveTab::LiveAnimationPreview => self.ui_live_animation_tab(ctx, ui),
                 ActiveTab::GridAndMechanics => self.ui_grid_and_mechanics_tab(ctx, ui),
+                ActiveTab::CameraMapRouter => self.ui_camera_map_router_tab(ctx, ui),
+                ActiveTab::Environment3DBuilder => self.ui_environment_3d_builder_tab(ctx, ui),
             });
         });
     }
@@ -1143,6 +1162,37 @@ impl FrickEditorApp {
     // PESTAÑA 4: ORDEN DE TILES EN CUSTOM NIGHT Y AJUSTE DE IA
     // --------------------------------------------------------------
     fn ui_grid_and_mechanics_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        // Modo Híbrido: Nodos Visuales vs Sobrescritura Manual GML
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Entorno de Programación:").strong());
+            if ui.selectable_label(self.project.advanced.use_node_editor, format!("{} Nodos Visuales (Auto-GML)", ic::FLOW_ARROW)).clicked() {
+                self.project.advanced.use_node_editor = true;
+            }
+            if ui.selectable_label(!self.project.advanced.use_node_editor, format!("{} Sobrescritura Manual (GML Puro)", ic::CODE)).clicked() {
+                self.project.advanced.use_node_editor = false;
+            }
+        });
+
+        if !self.project.advanced.use_node_editor {
+            egui::Frame::group(ui.style())
+                .fill(Color32::from_rgb(45, 32, 20))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(230, 160, 40)))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(8.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(ic::WARNING_CIRCLE).size(20.0).color(Color32::from_rgb(245, 170, 40)));
+                        ui.label(
+                            RichText::new("Modo Sobrescritura Manual Activo: Cualquier código escrito manualmente en la pestaña de GML tiene prioridad absoluta sobre los generadores visuales.")
+                                .color(Color32::WHITE)
+                                .size(12.0),
+                        );
+                    });
+                });
+            ui.add_space(6.0);
+        }
+        ui.add_space(6.0);
+
         let icon_tex = self.project.icon_48_path.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 96));
 
         ui.columns(2, |cols| {
@@ -1407,6 +1457,388 @@ impl FrickEditorApp {
                     *target = p;
                 }
             }
+        });
+    }
+
+    // --------------------------------------------------------------
+    // PESTAÑA 5: RUTEO DE CÁMARAS (ROOM 33: MAINLOCATIONMAP)
+    // --------------------------------------------------------------
+    fn ui_camera_map_router_tab(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
+        ui.columns(2, |cols| {
+            // Columna 1: Configuración de Ruta y Waypoints
+            cols[0].heading(format!("{}  Ruteo de Cámaras (Room 33)", ic::MAP_TRIFOLD));
+            cols[0].label(
+                "Diseña la trayectoria que recorre el animatrónico a través del restaurante antes de llegar a la oficina."
+            );
+            cols[0].add_space(8.0);
+
+            // Predefinidos de rutas
+            cols[0].horizontal(|ui| {
+                if ui.button(format!("{} Pasillo Oeste (1->2->6->9)", ic::FLOW_ARROW)).clicked() {
+                    self.project.advanced.camera_route = vec![
+                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Show Stage".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 2, camera_name: "CAM 02: Dining Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 6, camera_name: "CAM 06: West Hallway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 9, camera_name: "CAM 09: Office Doorway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                    ];
+                }
+                if ui.button(format!("{} Pasillo Este (1->2->4->5->9)", ic::FLOW_ARROW)).clicked() {
+                    self.project.advanced.camera_route = vec![
+                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Show Stage".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 2, camera_name: "CAM 02: Dining Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 4, camera_name: "CAM 04: East Hall".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 5, camera_name: "CAM 05: Kitchen Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 9, camera_name: "CAM 09: Office Doorway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                    ];
+                }
+                if ui.button(format!("{} Limpiar", ic::TRASH)).clicked() {
+                    self.project.advanced.camera_route.clear();
+                }
+            });
+
+            cols[0].add_space(8.0);
+            cols[0].separator();
+            cols[0].add_space(6.0);
+
+            // Lista de waypoints activos
+            let mut to_remove_node = None;
+            egui::ScrollArea::vertical().id_salt("cam_waypoints_scroll").max_height(260.0).show(&mut cols[0], |ui| {
+                if self.project.advanced.camera_route.is_empty() {
+                    ui.label(RichText::new("No hay cámaras en la ruta. Haz clic en las cámaras del plano derecho o usa un botón predefinido.").color(Color32::from_gray(140)).italics());
+                } else {
+                    for (step, node) in self.project.advanced.camera_route.iter_mut().enumerate() {
+                        egui::Frame::group(ui.style())
+                            .fill(Color32::from_rgb(26, 29, 36))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 65, 78)))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(8.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let badge_col = Color32::from_rgb(230, 130, 30);
+                                    ui.label(RichText::new(format!("#{}", step + 1)).strong().color(badge_col).size(15.0));
+                                    ui.add_space(4.0);
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(&node.camera_name).strong().color(Color32::WHITE));
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Velocidad:").size(11.0).color(Color32::from_gray(160)));
+                                            ui.add(egui::Slider::new(&mut node.transition_time_modifier, 0.5..=3.0).text("x").show_value(true));
+                                        });
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.button(ic::TRASH).clicked() {
+                                            to_remove_node = Some(step);
+                                        }
+                                        if ui.button(format!("{} Sprite", ic::IMAGE)).clicked() {
+                                            if let Some(p) = rfd::FileDialog::new().add_filter("PNG", &["png"]).pick_file() {
+                                                node.sprite_path = Some(p);
+                                            }
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(4.0);
+                    }
+                }
+            });
+
+            if let Some(idx) = to_remove_node {
+                self.project.advanced.camera_route.remove(idx);
+            }
+
+            cols[0].add_space(8.0);
+            cols[0].separator();
+            cols[0].add_space(4.0);
+            cols[0].label(RichText::new("Código GML Generado en Tiempo Real:").strong());
+            let cam_ids: Vec<String> = self.project.advanced.camera_route.iter().map(|n| n.camera_id.to_string()).collect();
+            let mut preview_code = format!(
+                "// Array de movimiento en cámaras\n\
+                 global.{id}_CameraRoute = [{cams}];\n\
+                 global.{id}_RouteStep = 0;\n\
+                 global.{id}_NextCamTimer = round(180 * {speed:.1});",
+                id = self.project.internal_id,
+                cams = cam_ids.join(", "),
+                speed = self.project.advanced.camera_route.first().map(|n| n.transition_time_modifier).unwrap_or(1.0)
+            );
+            cols[0].add(egui::TextEdit::multiline(&mut preview_code).desired_rows(4).desired_width(f32::INFINITY));
+
+            // Columna 2: Plano Topológico Interactivo de Cámaras
+            cols[1].heading(format!("{}  Plano Topológico del Restaurante", ic::BUILDING));
+            cols[1].label("Haz clic en cualquier cámara para añadirla o retirarla de la ruta:");
+            cols[1].add_space(8.0);
+
+            let (rect, _resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click());
+            let painter = cols[1].painter_at(rect);
+
+            // Fondo del mapa
+            painter.rect_filled(rect, 6.0, Color32::from_rgb(18, 22, 28));
+            painter.rect_stroke(rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgb(45, 55, 70)));
+
+            // Habitaciones esquemáticas
+            let draw_room = |p: &egui::Painter, r: Rect, title: &str| {
+                p.rect_filled(r, 4.0, Color32::from_rgb(24, 30, 40));
+                p.rect_stroke(r, 4.0, Stroke::new(1.0_f32, Color32::from_rgb(55, 68, 88)));
+                p.text(Pos2::new(r.center().x, r.min.y + 10.0), egui::Align2::CENTER_CENTER, title, egui::FontId::proportional(11.0), Color32::from_gray(160));
+            };
+
+            let ox = rect.min.x;
+            let oy = rect.min.y;
+
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 190.0, oy + 20.0), Vec2::new(160.0, 70.0)), "SHOW STAGE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 170.0, oy + 105.0), Vec2::new(200.0, 110.0)), "DINING AREA");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 40.0), Vec2::new(130.0, 70.0)), "BACKSTAGE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 125.0), Vec2::new(130.0, 90.0)), "PIRATE COVE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 105.0), Vec2::new(130.0, 90.0)), "EAST HALL");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 210.0), Vec2::new(130.0, 80.0)), "KITCHEN");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 230.0), Vec2::new(130.0, 70.0)), "SUPPLY CLOSET");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 200.0, oy + 270.0), Vec2::new(140.0, 75.0)), "THE OFFICE");
+
+            // Definición de las 9 cámaras
+            let cameras = [
+                (1u8, "CAM 01", Pos2::new(ox + 270.0, oy + 65.0), "CAM 01: Show Stage"),
+                (2u8, "CAM 02", Pos2::new(ox + 270.0, oy + 160.0), "CAM 02: Dining Area"),
+                (3u8, "CAM 03", Pos2::new(ox + 85.0, oy + 175.0), "CAM 03: Pirate Cove"),
+                (4u8, "CAM 04", Pos2::new(ox + 455.0, oy + 150.0), "CAM 04: East Hall"),
+                (5u8, "CAM 05", Pos2::new(ox + 455.0, oy + 250.0), "CAM 05: Kitchen Area"),
+                (6u8, "CAM 06", Pos2::new(ox + 210.0, oy + 235.0), "CAM 06: West Hallway"),
+                (7u8, "CAM 07", Pos2::new(ox + 85.0, oy + 265.0), "CAM 07: Supply Closet"),
+                (8u8, "CAM 08", Pos2::new(ox + 85.0, oy + 75.0), "CAM 08: Backstage"),
+                (9u8, "CAM 09", Pos2::new(ox + 270.0, oy + 245.0), "CAM 09: Office Doorway"),
+            ];
+
+            // Dibujar líneas conectoras de la ruta
+            let route_cam_ids: Vec<u8> = self.project.advanced.camera_route.iter().map(|n| n.camera_id).collect();
+            for w in 0..route_cam_ids.len().saturating_sub(1) {
+                let id1 = route_cam_ids[w];
+                let id2 = route_cam_ids[w + 1];
+                if let (Some(c1), Some(c2)) = (cameras.iter().find(|c| c.0 == id1), cameras.iter().find(|c| c.0 == id2)) {
+                    painter.line_segment([c1.2, c2.2], Stroke::new(2.5_f32, Color32::from_rgb(235, 125, 25)));
+                }
+            }
+
+            // Si hay ruta, trazar línea final desde el último punto hacia la oficina
+            if let Some(last_id) = route_cam_ids.last() {
+                if let Some(c) = cameras.iter().find(|cm| cm.0 == *last_id) {
+                    painter.line_segment([c.2, Pos2::new(ox + 270.0, oy + 305.0)], Stroke::new(2.0_f32, Color32::from_rgb(230, 60, 60)));
+                }
+            }
+
+            let mut to_toggle_camera = None;
+
+            // Dibujar cada nodo de cámara
+            for (cid, cname, pos, full_desc) in cameras.iter() {
+                let is_in_route = route_cam_ids.iter().position(|id| *id == *cid);
+                let cam_rect = Rect::from_center_size(*pos, Vec2::new(62.0, 26.0));
+
+                let (bg_col, border_col, txt_col) = if is_in_route.is_some() {
+                    (Color32::from_rgb(180, 85, 15), Color32::from_rgb(255, 180, 50), Color32::WHITE)
+                } else {
+                    (Color32::from_rgb(32, 38, 50), Color32::from_rgb(70, 80, 100), Color32::from_gray(190))
+                };
+
+                painter.rect_filled(cam_rect, 4.0, bg_col);
+                painter.rect_stroke(cam_rect, 4.0, Stroke::new(1.2_f32, border_col));
+
+                let label_text = if let Some(order) = is_in_route {
+                    format!("{} (#{})", cname, order + 1)
+                } else {
+                    cname.to_string()
+                };
+
+                painter.text(cam_rect.center(), egui::Align2::CENTER_CENTER, label_text, egui::FontId::proportional(11.5), txt_col);
+
+                // Interacción de clic en el nodo
+                let node_id = egui::Id::new(format!("cam_node_{}", cid));
+                let interact = cols[1].interact(cam_rect, node_id, Sense::click());
+                if interact.clicked() {
+                    to_toggle_camera = Some((*cid, full_desc.to_string()));
+                }
+            }
+
+            if let Some((cid, full_desc)) = to_toggle_camera {
+                if let Some(pos_idx) = self.project.advanced.camera_route.iter().position(|n| n.camera_id == cid) {
+                    self.project.advanced.camera_route.remove(pos_idx);
+                } else {
+                    self.project.advanced.camera_route.push(CameraRouteNode {
+                        camera_id: cid,
+                        camera_name: full_desc,
+                        sprite_path: None,
+                        transition_time_modifier: 1.0,
+                    });
+                }
+            }
+        });
+    }
+
+    // --------------------------------------------------------------
+    // PESTAÑA 6: CONSTRUCTOR 3D (LABERINTOS & SALVAMENTO)
+    // --------------------------------------------------------------
+    fn ui_environment_3d_builder_tab(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
+        ui.columns(2, |cols| {
+            // Columna Izquierda: Paleta de Objetos (Drag & Drop)
+            cols[0].heading(format!("{}  Catálogo de Entidades 3D & Props", ic::TOOLBOX));
+            cols[0].label("Haz clic para añadir objetos interactivos al laberinto (basado en Room 12-16):");
+            cols[0].add_space(8.0);
+
+            // Selector de Sala Destino
+            cols[0].horizontal(|ui| {
+                ui.label(RichText::new("Sala Destino:").strong());
+                let rooms = [
+                    "MinigameMaze_1",
+                    "MinigameMaze_2",
+                    "MinigameMaze_3",
+                    "MinigameMaze_4",
+                    "MinigameMaze_5",
+                    "SalvageRoom",
+                ];
+                egui::ComboBox::from_label("")
+                    .selected_text(&self.project.advanced.target_maze_room)
+                    .show_ui(ui, |ui| {
+                        for rm in rooms {
+                            ui.selectable_value(&mut self.project.advanced.target_maze_room, rm.to_string(), rm);
+                        }
+                    });
+            });
+
+            cols[0].add_space(8.0);
+
+            egui::ScrollArea::vertical().id_salt("prop_palette_scroll").max_height(280.0).show(&mut cols[0], |ui| {
+                let props = [
+                    (MazePropType::AnimatronicSpawn, "Punto de Interacción / Susto (Animatronic)", ic::GHOST),
+                    (MazePropType::Hatchet, "Hacha (Interactuable en Suelo)", ic::SWORD),
+                    (MazePropType::GiftBox, "Caja de Regalo (Prop)", ic::GIFT),
+                    (MazePropType::Poster, "Póster de Pared", ic::IMAGE),
+                    (MazePropType::ArcadeCabinet, "Máquina Arcade", ic::GAME_CONTROLLER),
+                    (MazePropType::EscapeDoor, "Puerta de Escape / Salida", ic::DOOR_OPEN),
+                ];
+
+                for (prop_type, desc, icon) in props.iter() {
+                    egui::Frame::group(ui.style())
+                        .fill(Color32::from_rgb(28, 31, 38))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_gray(100)))
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(*icon).size(18.0).color(Color32::from_rgb(200, 150, 50)));
+                                ui.label(RichText::new(*desc).strong());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button(format!("{} Añadir al Mapa", ic::PLUS)).clicked() {
+                                        let offset = (self.project.advanced.maze_entities.len() * 24) as i32;
+                                        self.project.advanced.maze_entities.push(EnvironmentEntity {
+                                            prop_type: prop_type.clone(),
+                                            x: 320 + (offset % 120),
+                                            y: 180 + (offset % 80),
+                                            scale_x: 1.0,
+                                            scale_y: 1.0,
+                                        });
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(6.0);
+                }
+            });
+
+            cols[0].add_space(6.0);
+            cols[0].horizontal(|ui| {
+                ui.label(RichText::new(format!("Entidades colocadas: {}", self.project.advanced.maze_entities.len())).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(format!("{} Limpiar Todo", ic::TRASH)).clicked() {
+                        self.project.advanced.maze_entities.clear();
+                    }
+                });
+            });
+
+            // Columna Derecha: Lienzo 2D Cenital Interactivo (Cálculo de Coordenadas In-Game)
+            cols[1].heading(format!("{}  Plano Cenital del Entorno", ic::MAP_TRIFOLD));
+            cols[1].label("Arrastra las entidades con el ratón. Clic derecho sobre una entidad para eliminarla:");
+            cols[1].add_space(8.0);
+
+            let (rect, _resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click_and_drag());
+            let painter = cols[1].painter_at(rect);
+
+            // Fondo simulando el plano técnico (Grid)
+            painter.rect_filled(rect, 4.0, Color32::from_rgb(15, 20, 25));
+            for i in 0..17 {
+                let offset_x = i as f32 * 32.0;
+                painter.line_segment(
+                    [Pos2::new(rect.min.x + offset_x, rect.min.y), Pos2::new(rect.min.x + offset_x, rect.max.y)],
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
+                );
+            }
+            for i in 0..12 {
+                let offset_y = i as f32 * 32.0;
+                painter.line_segment(
+                    [Pos2::new(rect.min.x, rect.min.y + offset_y), Pos2::new(rect.max.x, rect.min.y + offset_y)],
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
+                );
+            }
+            painter.rect_stroke(rect, 4.0, Stroke::new(2.0_f32, Color32::GRAY));
+
+            let mut to_delete = None;
+            let scale_canvas_x = 540.0 / 640.0;
+
+            for (idx, entity) in self.project.advanced.maze_entities.iter_mut().enumerate() {
+                let ex = rect.min.x + (entity.x as f32 * scale_canvas_x);
+                let ey = rect.min.y + entity.y as f32;
+                let entity_rect = Rect::from_center_size(Pos2::new(ex, ey), Vec2::new(26.0, 26.0));
+
+                let icon_str = match entity.prop_type {
+                    MazePropType::AnimatronicSpawn => ic::GHOST,
+                    MazePropType::Hatchet => ic::SWORD,
+                    MazePropType::GiftBox => ic::GIFT,
+                    MazePropType::Poster => ic::IMAGE,
+                    MazePropType::ArcadeCabinet => ic::GAME_CONTROLLER,
+                    MazePropType::EscapeDoor => ic::DOOR_OPEN,
+                };
+
+                let color = match entity.prop_type {
+                    MazePropType::AnimatronicSpawn => Color32::RED,
+                    MazePropType::Hatchet => Color32::LIGHT_GRAY,
+                    MazePropType::GiftBox => Color32::from_rgb(230, 180, 40),
+                    MazePropType::EscapeDoor => Color32::from_rgb(60, 200, 80),
+                    _ => Color32::from_rgb(100, 180, 255),
+                };
+
+                painter.rect_filled(entity_rect, 4.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190));
+                painter.rect_stroke(entity_rect, 4.0, Stroke::new(1.5_f32, Color32::WHITE));
+                painter.text(entity_rect.center(), egui::Align2::CENTER_CENTER, icon_str, egui::FontId::proportional(14.0), Color32::WHITE);
+
+                // Lógica de Drag & Drop
+                let id = egui::Id::new(format!("entity_drag_{}", idx));
+                let interact = cols[1].interact(entity_rect, id, Sense::drag());
+                if interact.dragged() {
+                    let dx = (interact.drag_delta().x / scale_canvas_x) as i32;
+                    let dy = interact.drag_delta().y as i32;
+                    entity.x = (entity.x + dx).clamp(0, 640);
+                    entity.y = (entity.y + dy).clamp(0, 360);
+                }
+                if interact.clicked_by(egui::PointerButton::Secondary) {
+                    to_delete = Some(idx);
+                }
+
+                // Tooltip de coordenadas
+                if interact.hovered() || interact.dragged() {
+                    painter.text(
+                        Pos2::new(entity_rect.center().x, entity_rect.max.y + 10.0),
+                        egui::Align2::CENTER_CENTER,
+                        format!("{}: ({}, {})", entity.prop_type.gml_object_name(), entity.x, entity.y),
+                        egui::FontId::proportional(10.5),
+                        Color32::YELLOW,
+                    );
+                }
+            }
+
+            if let Some(idx) = to_delete {
+                self.project.advanced.maze_entities.remove(idx);
+            }
+
+            cols[1].add_space(6.0);
+            cols[1].label(
+                RichText::new("Usa Clic Izquierdo para arrastrar entidades. Clic Derecho sobre una entidad para eliminarla.")
+                    .size(12.0)
+                    .color(Color32::from_gray(150)),
+            );
         });
     }
 }

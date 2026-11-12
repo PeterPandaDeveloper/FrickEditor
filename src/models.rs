@@ -313,6 +313,70 @@ pub struct AnimatronicProject {
     pub sound_voice_line: Option<PathBuf>,
     pub sound_defeat: Option<PathBuf>,
     pub sound_jumpscare: Option<PathBuf>,
+
+    // --- Mecánicas Avanzadas, Cámaras y Entornos 3D ---
+    pub advanced: AdvancedMechanicsConfig,
+}
+
+/// Nodos de ruta en el mapa de cámaras (MainLocationMap)
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CameraRouteNode {
+    pub camera_id: u8,
+    pub camera_name: String,
+    pub sprite_path: Option<PathBuf>,
+    pub transition_time_modifier: f32, // Multiplicador de velocidad para llegar a esta cámara
+}
+
+/// Objetos interactivos arrastrables en el Explorador 3D de Laberintos/Salvamento
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum MazePropType {
+    AnimatronicSpawn,   // oInteraction_Animatronic
+    Hatchet,            // oMazeFloorDecoration_Hatchet
+    GiftBox,            // oMazeProp_GiftBox
+    Poster,             // oMazeSign_Poster
+    ArcadeCabinet,      // oMazeProp_ArcadeCabinet
+    EscapeDoor,         // oInteraction_Escape
+}
+
+impl MazePropType {
+    pub fn gml_object_name(&self) -> &'static str {
+        match self {
+            Self::AnimatronicSpawn => "oInteraction_Animatronic",
+            Self::Hatchet => "oMazeFloorDecoration_Hatchet",
+            Self::GiftBox => "oMazeProp_GiftBox",
+            Self::Poster => "oMazeSign_Poster",
+            Self::ArcadeCabinet => "oMazeProp_ArcadeCabinet",
+            Self::EscapeDoor => "oInteraction_Escape",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EnvironmentEntity {
+    pub prop_type: MazePropType,
+    pub x: i32,
+    pub y: i32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AdvancedMechanicsConfig {
+    pub use_node_editor: bool, // Híbrido: True = Nodos Visuales, False = Código GML Manual
+    pub camera_route: Vec<CameraRouteNode>,
+    pub maze_entities: Vec<EnvironmentEntity>,
+    pub target_maze_room: String,
+}
+
+impl Default for AdvancedMechanicsConfig {
+    fn default() -> Self {
+        Self {
+            use_node_editor: true,
+            camera_route: Vec::new(),
+            maze_entities: Vec::new(),
+            target_maze_room: "MinigameMaze_1".to_string(),
+        }
+    }
 }
 
 impl Default for AnimatronicProject {
@@ -349,6 +413,7 @@ impl Default for AnimatronicProject {
             sound_voice_line: auto_file("murray_amigable.ogg"),
             sound_defeat: auto_file("murray_knock2.ogg"),
             sound_jumpscare: auto_file("murray_jumpscare.ogg"),
+            advanced: AdvancedMechanicsConfig::default(),
         }
     }
 }

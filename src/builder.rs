@@ -113,7 +113,7 @@ impl IdeBuilder {
              if (file_exists(\"{id_low}_jumpscare.ogg\")) snd_stream_jump = audio_create_stream(\"{id_low}_jumpscare.ogg\");\n\
              \n\
              attack_timer = round(lerp({atk1}, {atk20}, ai / 20.0));\n\
-             knock_timer = irandom_range(round(lerp({kmin1}, {kmin20}, ai / 20.0)), round(lerp({kmax1}, {kmax20}, ai / 20.0)));\n",
+             knock_timer = irandom_range(round(lerp({kmin1}, {kmin20}, ai / 20.0)), round(lerp({kmax1}, {kmax20}, ai / 20.0)));\n{camera_gml}",
             arch = b.archetype.display_name(),
             id = id,
             id_low = id_low,
@@ -125,7 +125,19 @@ impl IdeBuilder {
             kmin20 = b.move_min_frames_ai20,
             kmax1 = b.move_max_frames_ai1,
             kmax20 = b.move_max_frames_ai20,
-            has_acc = if b.countermeasure == CountermeasureType::RemoveAccessoryThenFlash { "true" } else { "false" }
+            has_acc = if b.countermeasure == CountermeasureType::RemoveAccessoryThenFlash { "true" } else { "false" },
+            camera_gml = if !proj.advanced.camera_route.is_empty() {
+                let cam_ids: Vec<String> = proj.advanced.camera_route.iter().map(|n| n.camera_id.to_string()).collect();
+                format!(
+                    "             // Ruteo de Cámaras (Room 33: MainLocationMap)\n\
+                     camera_route = [{}];\n\
+                     camera_step = 0;\n\
+                     camera_timer = 180;\n",
+                    cam_ids.join(", ")
+                )
+            } else {
+                String::new()
+            }
         );
         map.insert(format!("gml_Object_o{}_BackWindow_Create_0.gml", id), create_code);
 
@@ -923,10 +935,32 @@ AddInstanceToRoom("GameOver", objDeath_{id}, 0, 0);
 AddInstanceToRoom("CustomNightMenu", objCNTile_{id}, 0, 0);
 AddInstanceToRoom("EndlessSelection", objCNTile_{id}, 0, 0);
 AddInstanceToRoom("EndlessShopSelection_FinalNight", objCNTile_{id}, 0, 0);
+{props_code}
 "#,
                 id = id,
                 import_dir = import_dir.display(),
                 gml_dir = gml_dir.display(),
+                props_code = {
+                    let mut code = String::new();
+                    if !proj.advanced.maze_entities.is_empty() {
+                        let target_room = &proj.advanced.target_maze_room;
+                        code.push_str(&format!("\n// Inyección de Props 3D / Laberinto en {target_room} para {id}\n"));
+                        for (idx, ent) in proj.advanced.maze_entities.iter().enumerate() {
+                            let obj_name = ent.prop_type.gml_object_name();
+                            code.push_str(&format!(
+                                "UndertaleGameObject prop_{id}_{idx} = Data.GameObjects.ByName(\"{obj_name}\");\n\
+                                 if (prop_{id}_{idx} != null) AddInstanceToRoom(\"{target_room}\", prop_{id}_{idx}, {x}, {y});\n",
+                                id = id,
+                                idx = idx,
+                                obj_name = obj_name,
+                                target_room = target_room,
+                                x = ent.x,
+                                y = ent.y
+                            ));
+                        }
+                    }
+                    code
+                }
             ));
         }
 
@@ -1305,6 +1339,7 @@ AddInstanceToRoom("GameOver", objDeath, 0, 0);
 AddInstanceToRoom("CustomNightMenu", objCNTile, 0, 0);
 AddInstanceToRoom("EndlessSelection", objCNTile, 0, 0);
 AddInstanceToRoom("EndlessShopSelection_FinalNight", objCNTile, 0, 0);
+{props_code}
 
 // 5. PARCHEO DE PANTALLA GAMEOVER (SILUETA CARMESÍ Y TIME LASTED REAL)
 var goCreate = Data.Code.ByName("gml_Object_oGameOver_Create_0");
@@ -1422,7 +1457,28 @@ public class Packer
             ver = version,
             import_dir = import_dir.display(),
             gml_dir = gml_dir.display(),
-            go_tip = go_tip
+            go_tip = go_tip,
+            props_code = {
+                let mut code = String::new();
+                if !proj.advanced.maze_entities.is_empty() {
+                    let target_room = &proj.advanced.target_maze_room;
+                    code.push_str(&format!("\n// Inyección de Props 3D / Laberinto en {target_room} para {id}\n"));
+                    for (idx, ent) in proj.advanced.maze_entities.iter().enumerate() {
+                        let obj_name = ent.prop_type.gml_object_name();
+                        code.push_str(&format!(
+                            "UndertaleGameObject prop_{id}_{idx} = Data.GameObjects.ByName(\"{obj_name}\");\n\
+                             if (prop_{id}_{idx} != null) AddInstanceToRoom(\"{target_room}\", prop_{id}_{idx}, {x}, {y});\n",
+                            id = id,
+                            idx = idx,
+                            obj_name = obj_name,
+                            target_room = target_room,
+                            x = ent.x,
+                            y = ent.y
+                        ));
+                    }
+                }
+                code
+            }
         )
     }
 
