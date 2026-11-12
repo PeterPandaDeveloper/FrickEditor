@@ -43,27 +43,27 @@ FrickEditor Studio is organized into 7 specialized workspaces:
   * **State 2:** Flashlight stun / defeat state.
   * **State 4:** Jumpscare sequence rendering.
 
-### 4. Cuadrícula & IA (`Tab 4`)
-* **Custom Night Grid Manager:** Interactive selector for Custom Night Page 2 (56 modded slots) with automatic `TreeY` scroll-safe coordinate computation (`base_y + rodney.TreeY`).
-* **Hybrid Logic Architecture:**
-  * **Visual Nodes:** Automatically generates GameMaker Language (GML) code from high-level behavioral parameters.
-  * **Manual GML Override:** Advanced modders can write custom GML directly into an integrated code editor with syntax protection.
+### 4. Motor de Comportamiento e IA (`Tab 4`)
+* **Custom Night Grid Manager:** Selector interactivo de casillas para la Página de Mods de Custom Night (32 slots) con cálculo automático y scroll seguro con `TreeY` (`base_y + rodney.TreeY`).
+* **Sistema Híbrido de Nodos Visuales (`egui_node_graph`):** Permite diseñar la lógica del animatrónico conectando cables entre cajas de Eventos, Condiciones y Acciones. Traduce automáticamente el grafo visual a código GML VM seguro.
+* **Sobrescritura Manual GML:** Editor de código integrado para programar directamente sobre los scripts del motor (`Step_0`, `Create_0`, `CleanUp_0`, `Draw_0`, `Draw_64`).
+* **Simulador de Oficina a 60 FPS Integrado:** Visualizador interactivo en tiempo real con controles para subir/bajar persianas, activar linterna (F) y probar clics en accesorios, validando la regla invariante de seguridad #3.
 
 ### 5. Ruteo de Cámaras (`Tab 5`)
-* **Room 33 Minimap Router:** Interactive floor plan of the restaurant with 9 camera waypoints (Cam 01 Dining Area to Cam 09 Stage).
-* Configurable transition speed multipliers for each waypoint.
-* Generates `global.<ID>_CameraRoute = [...]` GameMaker initialization arrays automatically.
+* **Room 33 Minimap Router:** Plano interactivo del restaurante con 9 cámaras (Cam 01 Dining Area a Cam 09 Stage).
+* Multiplicadores configurables de velocidad de transición entre cámaras.
+* Genera automáticamente los arrays GML `global.<ID>_CameraRoute = [...]`.
 
-### 6. Constructor 3D de Laberintos & Salvamento (`Tab 6`)
-* **Blueprint Drag & Drop Canvas:** Visual 2D/3D prop placement for `MinigameMaze_1..5` and `Room 18 (Salvage Room)`.
-* Support for engine props:
-  * `oInteraction_Animatronic` (Spawn point)
-  * `oMazeFloorDecoration_Hatchet` (Hatchet weapon)
-  * `oMazeProp_GiftBox` (Collectibles)
-  * `oMazeSign_Poster` (Environmental lore)
-  * `oMazeProp_ArcadeCabinet` (Mini-game triggers)
-  * `oInteraction_Escape` (Exit door)
-* Injects room chunk instances directly into GameMaker room data.
+### 6. Constructor 3D (Laberintos, Conductos & Modo Endless) (`Tab 6`)
+* **Lienzo Blueprint Drag & Drop:** Colocación visual de entidades interactivas para las salas de laberintos 3D (`MinigameMaze_1..5`), conductos de ventilación y arenas Endless.
+* Soporte nativo para props del motor:
+  * `oInteraction_Animatronic` (Punto de aparición / susto)
+  * `oMazeFloorDecoration_Hatchet` (Hacha interactiva en suelo)
+  * `oMazeProp_GiftBox` (Cajas de regalo y coleccionables)
+  * `oMazeSign_Poster` (Pósters y lore ambiental)
+  * `oMazeProp_ArcadeCabinet` (Máquinas recreativas)
+  * `oInteraction_Escape` (Puerta de escape / salida)
+* Inyecta instancias en los chunks de sala del motor en `data.win`.
 
 ---
 
@@ -71,13 +71,15 @@ FrickEditor Studio is organized into 7 specialized workspaces:
 
 ```text
 FrickEditor/
-├── Cargo.toml                              # Rust dependencies (eframe, egui, rodio, image, serde)
+├── Cargo.toml                              # Dependencias Rust (eframe, egui, egui_node_graph2, rodio, image)
+├── run.bat                                 # Lanzador rápido en 1 clic para Windows
 ├── src/
-│   ├── main.rs                             # Main UI, tabs, canvases, 60fps animation preview
-│   ├── models.rs                           # Data structures, manifests, camera routes, maze props
-│   ├── builder.rs                          # Asset processor, GML generator, master CSX builder
-│   ├── mod_manager.rs                      # Mod manager, slot conflict detector & auto-resolver
-│   └── launcher.rs                         # Headless UTMT background runner & Game process launcher
+│   ├── main.rs                             # Ventana principal, navegación, simuladores y 7 módulos
+│   ├── node_editor.rs                      # Motor de nodos visuales Drag & Drop (egui_node_graph) y traductor GML
+│   ├── models.rs                           # Estructuras de datos, manifiestos, rutas y props
+│   ├── builder.rs                          # Procesador de assets, generador de scripts y compilador CSX
+│   ├── mod_manager.rs                      # Gestor de mods, detector y auto-resolución de slots
+│   └── launcher.rs                         # Inyector headless de UTMT y ejecutor de Frickbears 3.exe
 ├── assets/
 │   └── sample_murray/                      # Complete working sample assets (sprites, audio, icons)
 ├── templates/
@@ -97,25 +99,21 @@ FrickEditor/
 
 ## 🏗️ Quick Start & Build
 
-### Requirements
-* [Rust](https://www.rust-lang.org/) (1.75+ recommended with Cargo)
-* Windows 10/11 (for UndertaleModTool execution and GameMaker VM target)
+### Opción 1: Lanzador Directo en Windows (Recomendado)
+Haz doble clic en:
+`run.bat`
 
-### Build & Run
+### Opción 2: Desde Terminal con Cargo
 ```bash
-# Clone the repository
-git clone https://github.com/PeterPandaDeveloper/FrickEditor.git
-cd FrickEditor
-
-# Run development build
+# Compilar y correr en modo desarrollo
 cargo run
 
-# Build optimized release binary
-cargo build --release
+# Compilar y correr en modo optimizado a 60 FPS
+cargo run --release
 ```
 
-The compiled binary will be located at:
-`target/release/frick_editor.exe`
+El ejecutable directo compilado se encuentra en:
+[frick_editor.exe](file:///D:/Frickbears-mod/FrickEditor_GitHub_Repository/target/debug/frick_editor.exe)
 
 ---
 

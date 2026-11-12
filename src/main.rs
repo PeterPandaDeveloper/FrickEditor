@@ -2,6 +2,7 @@ mod builder;
 mod launcher;
 mod mod_manager;
 mod models;
+pub mod node_editor;
 
 use builder::IdeBuilder;
 use launcher::GameLauncher;
@@ -60,6 +61,12 @@ struct FrickEditorApp {
     tex_cache: HashMap<PathBuf, TextureHandle>,
     _audio_stream: Option<OutputStream>,
     audio_sink: Option<Sink>,
+    // Motor Híbrido de Nodos y Simulación
+    node_state: node_editor::FrickEditorState,
+    node_custom_state: node_editor::NodeGraphCustomState,
+    selected_code_file: usize,
+    sim_blind_or_door_closed: bool,
+    sim_flashlight_on: bool,
 }
 
 impl FrickEditorApp {
@@ -93,17 +100,24 @@ impl FrickEditorApp {
         mod_manager.add_or_update_mod(default_proj.clone());
         let _ = mod_manager.scan_mods(&default_proj.workspace_dir);
 
+        let (_graph, node_state) = node_editor::create_default_murray_graph();
+
         Self {
             project: default_proj,
             mod_manager,
             active_tab: ActiveTab::ModManager,
             preview_state: PreviewState::IdleWithGlasses,
             sim_time: 0.0,
-            status_message: "FrickEditor Studio listo. Gestor de Mods y Lanzador One-Click cargados.".to_string(),
+            status_message: "FrickEditor Studio listo. Gestor de Mods y Motor Híbrido cargados.".to_string(),
             status_is_error: false,
             tex_cache: HashMap::new(),
             _audio_stream: stream,
             audio_sink: sink,
+            node_state,
+            node_custom_state: node_editor::NodeGraphCustomState::default(),
+            selected_code_file: 0,
+            sim_blind_or_door_closed: false,
+            sim_flashlight_on: false,
         }
     }
 
@@ -1159,59 +1173,274 @@ impl FrickEditorApp {
     }
 
     // --------------------------------------------------------------
-    // PESTAÑA 4: ORDEN DE TILES EN CUSTOM NIGHT Y AJUSTE DE IA
+    // PESTAÑA 4: MOTOR DE COMPORTAMIENTO HÍBRIDO (NODOS / GML) & CUADRÍCULA
     // --------------------------------------------------------------
     fn ui_grid_and_mechanics_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        // Modo Híbrido: Nodos Visuales vs Sobrescritura Manual GML
+        // Encabezado con selector híbrido
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Entorno de Programación:").strong());
-            if ui.selectable_label(self.project.advanced.use_node_editor, format!("{} Nodos Visuales (Auto-GML)", ic::FLOW_ARROW)).clicked() {
-                self.project.advanced.use_node_editor = true;
-            }
-            if ui.selectable_label(!self.project.advanced.use_node_editor, format!("{} Sobrescritura Manual (GML Puro)", ic::CODE)).clicked() {
-                self.project.advanced.use_node_editor = false;
-            }
-        });
+            ui.heading(format!("{} Motor de Comportamiento e IA", ic::CPU));
+            ui.add_space(20.0);
 
-        if !self.project.advanced.use_node_editor {
             egui::Frame::group(ui.style())
-                .fill(Color32::from_rgb(45, 32, 20))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(230, 160, 40)))
+                .fill(Color32::from_rgb(20, 24, 30))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(100, 150, 255)))
                 .rounding(Rounding::same(6.0))
-                .inner_margin(8.0)
+                .inner_margin(6.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(ic::WARNING_CIRCLE).size(20.0).color(Color32::from_rgb(245, 170, 40)));
-                        ui.label(
-                            RichText::new("Modo Sobrescritura Manual Activo: Cualquier código escrito manualmente en la pestaña de GML tiene prioridad absoluta sobre los generadores visuales.")
-                                .color(Color32::WHITE)
-                                .size(12.0),
+                        ui.selectable_value(
+                            &mut self.project.advanced.use_node_editor,
+                            true,
+                            format!("{} Drag & Drop (Nodos Visuales)", ic::FLOW_ARROW),
+                        );
+                        ui.selectable_value(
+                            &mut self.project.advanced.use_node_editor,
+                            false,
+                            format!("{} Código Manual (GML Puro)", ic::CODE),
                         );
                     });
                 });
-            ui.add_space(6.0);
-        }
+        });
+
+        ui.add_space(8.0);
+
+        // Previsualizador 60 FPS texturas
+        let body_t = self.project.body_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
+        let head_t = self.project.head_normal_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
+        let scare_t = self.project.head_scare_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
+        let glass_t = self.project.accessory_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 128));
+        let flash_t = self.project.flash_defeat_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 256));
+        let j0_t = self.project.jumpscare_frame_0.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
+        let j1_t = self.project.jumpscare_frame_1.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
+        let j2_t = self.project.jumpscare_frame_2.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
+
+        let t = self.sim_time;
+
+        ui.columns(2, |cols| {
+            // COLUMNA IZQUIERDA: Área de Programación (Nodos o GML)
+            if self.project.advanced.use_node_editor {
+                cols[0].horizontal(|ui| {
+                    ui.label(RichText::new("Editor de Nodos Lógicos:").strong().color(Color32::from_rgb(100, 180, 255)));
+                    ui.label(RichText::new("(Clic derecho para añadir nodos)").size(11.0).color(Color32::GRAY));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(format!("{} Traducir a GML", ic::ARROWS_CLOCKWISE)).clicked() {
+                            let gml = node_editor::generate_gml_from_graph(&self.node_state.graph, &self.project.internal_id);
+                            let step_key = format!("gml_Object_o{}_BackWindow_Step_0.gml", self.project.internal_id);
+                            self.project.behavior.custom_gml_overrides.insert(step_key, gml);
+                            self.status_message = "Grafo de nodos sincronizado y traducido a GML con éxito.".to_string();
+                            self.status_is_error = false;
+                        }
+                    });
+                });
+
+                cols[0].add_space(4.0);
+
+                let (rect, _) = cols[0].allocate_exact_size(Vec2::new(cols[0].available_width(), 460.0), Sense::click_and_drag());
+                let painter = cols[0].painter_at(rect);
+                painter.rect_filled(rect, 6.0, Color32::from_rgb(18, 20, 26));
+                painter.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, Color32::from_rgb(55, 60, 75)));
+
+                cols[0].allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    node_editor::draw_node_graph_ui(ui, &mut self.node_state, &mut self.node_custom_state);
+                });
+            } else {
+                cols[0].label(RichText::new("Editor GML Avanzado: Sobrescritura directa de los scripts.").strong().color(Color32::from_rgb(255, 170, 50)));
+                cols[0].add_space(4.0);
+
+                let gml_files = crate::builder::IdeBuilder::get_effective_gml_scripts(&self.project);
+                let file_names: Vec<String> = gml_files.keys().cloned().collect();
+
+                if self.selected_code_file >= file_names.len() {
+                    self.selected_code_file = 0;
+                }
+
+                if let Some(selected_key) = file_names.get(self.selected_code_file) {
+                    cols[0].horizontal(|ui| {
+                        ui.label(RichText::new("Script Activo:").strong());
+                        egui::ComboBox::from_label("")
+                            .selected_text(selected_key)
+                            .show_ui(ui, |ui| {
+                                for (idx, name) in file_names.iter().enumerate() {
+                                    ui.selectable_value(&mut self.selected_code_file, idx, name);
+                                }
+                            });
+
+                        if ui.button(format!("{} Revertir a Plantilla", ic::ARROW_COUNTER_CLOCKWISE)).clicked() {
+                            self.project.behavior.custom_gml_overrides.remove(selected_key);
+                        }
+                    });
+
+                    cols[0].add_space(4.0);
+
+                    let mut active_code = self.project.behavior.custom_gml_overrides
+                        .get(selected_key)
+                        .cloned()
+                        .unwrap_or_else(|| gml_files.get(selected_key).cloned().unwrap_or_default());
+
+                    egui::ScrollArea::vertical().id_salt("gml_editor_scroll").max_height(420.0).show(&mut cols[0], |ui| {
+                        if ui.add(egui::TextEdit::multiline(&mut active_code).code_editor().desired_width(f32::INFINITY)).changed() {
+                            self.project.behavior.custom_gml_overrides.insert(selected_key.clone(), active_code);
+                        }
+                    });
+                }
+            }
+
+            // COLUMNA DERECHA: Simulador Interactivo a 60 FPS
+            cols[1].heading(format!("{} Simulador Interactivo de Oficina", ic::MONITOR_PLAY));
+            cols[1].add_space(4.0);
+
+            let (rect, resp) = cols[1].allocate_exact_size(Vec2::new(cols[1].available_width(), 310.0), Sense::click());
+            let painter = cols[1].painter_at(rect);
+            painter.rect_filled(rect, 6.0, Color32::from_rgb(10, 12, 16));
+            painter.rect_stroke(rect, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(70, 75, 90)));
+
+            let center = rect.center();
+
+            // Renderizado de animatrónico
+            match self.preview_state {
+                PreviewState::IdleWithGlasses => {
+                    let bob_body = (t * 3.0).sin() * 4.0;
+                    let bob_head = (t * 4.0).sin() * 5.0;
+                    if let Some(tex) = &body_t {
+                        let r = Rect::from_center_size(Pos2::new(center.x, center.y + 65.0 + bob_body), Vec2::new(170.0, 125.0));
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if let Some(tex) = &head_t {
+                        let r = Rect::from_center_size(Pos2::new(center.x, center.y - 12.0 + bob_head), Vec2::new(150.0, 130.0));
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if let Some(tex) = &glass_t {
+                        let gx = center.x + (self.project.behavior.accessory_offset_x as f32 - 52.0);
+                        let gy = center.y - 10.0 + bob_head + (self.project.behavior.accessory_offset_y as f32 - 48.0);
+                        let r = Rect::from_center_size(Pos2::new(gx, gy), Vec2::new(68.0, 26.0));
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                        painter.rect_stroke(r, 2.0, Stroke::new(1.5_f32, Color32::from_rgb(50, 220, 100)));
+                    }
+                }
+                PreviewState::ScaredNoGlasses => {
+                    let jitter_x = (t * 45.0).sin() * 3.5;
+                    let jitter_y = (t * 55.0).cos() * 3.5;
+                    if let Some(tex) = &body_t {
+                        let r = Rect::from_center_size(Pos2::new(center.x, center.y + 65.0), Vec2::new(170.0, 125.0));
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if let Some(tex) = &scare_t {
+                        let r = Rect::from_center_size(Pos2::new(center.x + jitter_x, center.y - 12.0 + jitter_y), Vec2::new(155.0, 135.0));
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                }
+                PreviewState::FlashedDefeat => {
+                    let fall_t = (t % 1.5) / 1.5;
+                    let shake_x = (t * 60.0).sin() * 5.0;
+                    let drop_y = if fall_t > 0.4 { (fall_t - 0.4) * 200.0 } else { 0.0 };
+                    if let Some(tex) = &flash_t {
+                        let r = Rect::from_center_size(Pos2::new(center.x + shake_x, center.y + drop_y), Vec2::new(190.0, 190.0));
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                }
+                PreviewState::JumpscareLoop => {
+                    let cycle = (t % 1.4) / 1.4;
+                    let zoom = 0.55 + (cycle.powf(0.45) * 0.70);
+                    let sz = Vec2::new(300.0 * zoom, 300.0 * zoom);
+                    if let Some(tex) = &j0_t {
+                        let r = Rect::from_center_size(Pos2::new(center.x, center.y + 20.0), sz);
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    let head_choice = if ((t * 15.0) as i32) % 2 == 0 { &j1_t } else { &j2_t };
+                    if let Some(tex) = head_choice {
+                        let jaw_y = (t * 35.0).sin() * 6.0 * zoom;
+                        let r = Rect::from_center_size(Pos2::new(center.x, center.y - 10.0 + jaw_y), sz);
+                        painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                }
+            }
+
+            // Si la persiana está cerrada en la simulación
+            if self.sim_blind_or_door_closed {
+                painter.rect_filled(rect, 6.0, Color32::from_rgb(32, 35, 44));
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    format!("{} PERSIANA CERRADA\nAnimatrónico no puede atacar (Regla #3)", ic::LOCK_KEY),
+                    egui::FontId::proportional(15.0),
+                    Color32::from_rgb(220, 220, 240),
+                );
+            }
+
+            // Efecto de linterna
+            if self.sim_flashlight_on && !self.sim_blind_or_door_closed {
+                painter.rect_filled(rect, 6.0, Color32::from_rgba_unmultiplied(255, 255, 170, 45));
+            }
+
+            if resp.clicked() && !self.sim_blind_or_door_closed {
+                self.preview_state = PreviewState::ScaredNoGlasses;
+            }
+
+            // Controles interactivos del simulador
+            cols[1].add_space(6.0);
+            cols[1].horizontal(|ui| {
+                ui.toggle_value(&mut self.sim_blind_or_door_closed, format!("{} Persiana", ic::LOCK_KEY));
+                ui.toggle_value(&mut self.sim_flashlight_on, format!("{} Linterna (F)", ic::FLASHLIGHT));
+                if ui.button(format!("{} Clic en Gafas", ic::CURSOR_CLICK)).clicked() {
+                    self.preview_state = PreviewState::ScaredNoGlasses;
+                }
+            });
+
+            cols[1].add_space(4.0);
+            cols[1].horizontal(|ui| {
+                if ui.button(format!("{} Flash Defeat", ic::SUN)).clicked() {
+                    self.preview_state = PreviewState::FlashedDefeat;
+                }
+                if ui.button(format!("{} Jumpscare", ic::GHOST)).clicked() {
+                    self.preview_state = PreviewState::JumpscareLoop;
+                }
+                if ui.button(format!("{} Normal", ic::ARROWS_CLOCKWISE)).clicked() {
+                    self.preview_state = PreviewState::IdleWithGlasses;
+                }
+            });
+
+            cols[1].add_space(6.0);
+            egui::Frame::group(cols[1].style())
+                .fill(Color32::from_rgb(24, 27, 34))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 65, 80)))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(6.0)
+                .show(&mut cols[1], |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(ic::SHIELD_CHECK).size(18.0).color(Color32::from_rgb(80, 210, 130)));
+                        ui.label(
+                            RichText::new("Invariante Rule #3: Si la persiana está cerrada (!my_blind.Open), el animatrónico tiene prohibido atacar.")
+                                .size(11.5)
+                                .color(Color32::from_gray(190)),
+                        );
+                    });
+                });
+        });
+
+        // SECCIÓN INFERIOR: Cuadrícula de Custom Night & Sliders
+        ui.add_space(10.0);
+        ui.separator();
         ui.add_space(6.0);
 
         let icon_tex = self.project.icon_48_path.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 96));
 
         ui.columns(2, |cols| {
             // Columna Izquierda: Selector Visual de Orden en la Página de Mods (32 Slots = 8x4)
-            cols[0].heading(format!("{}  Posición y Orden del Tile en la Página de Mods", ic::GRID_FOUR));
-            cols[0].label("Haz clic en cualquier casilla para elegir en qué orden aparece el animatrónico en la Página 2 (grilla nativa 8x4):");
-            cols[0].add_space(8.0);
+            cols[0].heading(format!("{}  Posición del Tile en Custom Night", ic::GRID_FOUR));
+            cols[0].label("Haz clic en cualquier casilla para elegir en qué orden aparece en la Página 2 (8x4):");
+            cols[0].add_space(6.0);
 
             egui::Frame::group(cols[0].style())
                 .fill(Color32::BLACK)
                 .stroke(Stroke::new(1.5_f32, Color32::from_gray(160)))
-                .inner_margin(10.0)
+                .inner_margin(8.0)
                 .show(&mut cols[0], |ui| {
                     egui::Grid::new("custom_night_page2_grid")
-                        .spacing([6.0, 8.0])
+                        .spacing([6.0, 6.0])
                         .show(ui, |ui| {
                             for slot in 0..32 {
                                 let is_selected = self.project.custom_night.slot_index == slot;
-                                let (rect, resp) = ui.allocate_exact_size(Vec2::new(40.0, 48.0), Sense::click());
+                                let (rect, resp) = ui.allocate_exact_size(Vec2::new(36.0, 42.0), Sense::click());
                                 if resp.clicked() {
                                     self.project.custom_night.slot_index = slot;
                                 }
@@ -1228,7 +1457,7 @@ impl FrickEditorApp {
 
                                 if is_selected {
                                     if let Some(tex) = &icon_tex {
-                                        let img_r = Rect::from_min_size(rect.min + Vec2::new(2.0, 2.0), Vec2::new(36.0, 36.0));
+                                        let img_r = Rect::from_min_size(rect.min + Vec2::new(2.0, 2.0), Vec2::new(32.0, 32.0));
                                         p.image(tex.id(), img_r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                                     }
                                     p.rect_stroke(rect, 3.0, Stroke::new(2.0_f32, Color32::YELLOW));
@@ -1237,7 +1466,7 @@ impl FrickEditorApp {
                                         rect.center(),
                                         egui::Align2::CENTER_CENTER,
                                         format!("#{}", slot + 1),
-                                        egui::FontId::proportional(12.0),
+                                        egui::FontId::proportional(11.0),
                                         Color32::from_gray(130),
                                     );
                                 }
@@ -1250,10 +1479,10 @@ impl FrickEditorApp {
                 });
 
             let (tx, ty) = self.project.custom_night.slot_to_xy();
-            cols[0].add_space(6.0);
+            cols[0].add_space(4.0);
             cols[0].label(
                 RichText::new(format!(
-                    "{} Casilla seleccionada: Slot #{}  ->  Coordenadas en GML: tile_x = {}, tile_y = {}",
+                    "{} Casilla seleccionada: Slot #{}  ->  Coordenadas GML: tile_x = {}, tile_y = {}",
                     ic::CHECK_CIRCLE,
                     self.project.custom_night.slot_index + 1,
                     tx,
@@ -1264,8 +1493,8 @@ impl FrickEditorApp {
             );
 
             // Columna Derecha: Parámetros de IA, 4 Layers Down y Textos
-            cols[1].heading(format!("{}  Parámetros de IA, 4 Layers Down y Textos", ic::SLIDERS_HORIZONTAL));
-            cols[1].add_space(6.0);
+            cols[1].heading(format!("{}  Parámetros de IA & Textos", ic::SLIDERS_HORIZONTAL));
+            cols[1].add_space(4.0);
 
             egui::ComboBox::from_label("Arquetipo de Comportamiento")
                 .selected_text(self.project.behavior.archetype.display_name())
@@ -1282,7 +1511,6 @@ impl FrickEditorApp {
                     }
                 });
             cols[1].separator();
-            cols[1].add_space(4.0);
             cols[1].add(
                 egui::Slider::new(&mut self.project.behavior.endless_mode_ai, 1..=20)
                     .text("IA Automática en Modo Endless"),
@@ -1295,25 +1523,17 @@ impl FrickEditorApp {
                 egui::Slider::new(&mut self.project.behavior.attack_window_frames_ai20, 120..=600)
                     .text("Frames para Atacar en IA 20 (320 = 5.3s)"),
             );
-            cols[1].add(
-                egui::Slider::new(&mut self.project.behavior.accessory_offset_x, 0..=120)
-                    .text("Offset X de Gafas sobre la cabeza"),
-            );
-            cols[1].add(
-                egui::Slider::new(&mut self.project.behavior.accessory_offset_y, 0..=120)
-                    .text("Offset Y de Gafas sobre la cabeza"),
-            );
 
-            cols[1].add_space(8.0);
-            cols[1].label(RichText::new("Descripción emergente en Custom Night (Tooltip):").strong());
+            cols[1].add_space(4.0);
+            cols[1].label(RichText::new("Descripción emergente (Tooltip):").strong());
             cols[1].add(
                 egui::TextEdit::multiline(&mut self.project.custom_night.cursor_tooltip)
-                    .desired_rows(3)
+                    .desired_rows(2)
                     .desired_width(f32::INFINITY),
             );
 
-            cols[1].add_space(6.0);
-            cols[1].label(RichText::new("Consejo en Pantalla de Muerte (Game Over Tip):").strong());
+            cols[1].add_space(4.0);
+            cols[1].label(RichText::new("Consejo en Game Over:").strong());
             cols[1].add(
                 egui::TextEdit::multiline(&mut self.project.custom_night.gameover_tip)
                     .desired_rows(2)
@@ -1671,7 +1891,7 @@ impl FrickEditorApp {
     }
 
     // --------------------------------------------------------------
-    // PESTAÑA 6: CONSTRUCTOR 3D (LABERINTOS & SALVAMENTO)
+    // PESTAÑA 6: CONSTRUCTOR 3D (LABERINTOS, CONDUCTOS & MODO ENDLESS)
     // --------------------------------------------------------------
     fn ui_environment_3d_builder_tab(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.columns(2, |cols| {
@@ -1689,7 +1909,8 @@ impl FrickEditorApp {
                     "MinigameMaze_3",
                     "MinigameMaze_4",
                     "MinigameMaze_5",
-                    "SalvageRoom",
+                    "MinigameMaze_Vents",
+                    "MinigameMaze_Endless",
                 ];
                 egui::ComboBox::from_label("")
                     .selected_text(&self.project.advanced.target_maze_room)
