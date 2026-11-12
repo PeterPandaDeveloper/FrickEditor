@@ -1,7 +1,11 @@
 mod builder;
+mod launcher;
+mod mod_manager;
 mod models;
 
 use builder::IdeBuilder;
+use launcher::GameLauncher;
+use mod_manager::ModManager;
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
 use models::{AnimatronicArchetype, AnimatronicProject, CountermeasureType};
@@ -28,6 +32,7 @@ fn main() -> eframe::Result<()> {
 
 #[derive(PartialEq, Clone, Copy)]
 enum ActiveTab {
+    ModManager,
     Gallery,
     SpritesAndGuide,
     LiveAnimationPreview,
@@ -44,6 +49,7 @@ enum PreviewState {
 
 struct FrickEditorApp {
     project: AnimatronicProject,
+    mod_manager: ModManager,
     active_tab: ActiveTab,
     preview_state: PreviewState,
     sim_time: f32,
@@ -79,16 +85,63 @@ impl FrickEditorApp {
             Err(_) => (None, None),
         };
 
+        let default_proj = AnimatronicProject::default();
+        let mods_dir = default_proj.workspace_dir.join("mods");
+        let mut mod_manager = ModManager::new(mods_dir);
+        mod_manager.add_or_update_mod(default_proj.clone());
+        let _ = mod_manager.scan_mods(&default_proj.workspace_dir);
+
         Self {
-            project: AnimatronicProject::default(),
-            active_tab: ActiveTab::Gallery,
+            project: default_proj,
+            mod_manager,
+            active_tab: ActiveTab::ModManager,
             preview_state: PreviewState::IdleWithGlasses,
             sim_time: 0.0,
-            status_message: "Estudio listo. Todos los subsistemas cargados.".to_string(),
+            status_message: "FrickEditor Studio listo. Gestor de Mods y Lanzador One-Click cargados.".to_string(),
             status_is_error: false,
             tex_cache: HashMap::new(),
             _audio_stream: stream,
             audio_sink: sink,
+        }
+    }
+
+    fn handle_one_click_play(&mut self) {
+        // 1. Sincronizar el proyecto actual en el gestor
+        self.mod_manager.add_or_update_mod(self.project.clone());
+
+        // 2. Verificar y auto-resolver conflictos de slots si existen
+        let conflicts = self.mod_manager.check_conflicts();
+        if !conflicts.is_empty() {
+            self.mod_manager.auto_resolve_slots();
+            if let Some(p) = self.mod_manager.installed_mods.iter().find(|m| m.internal_id == self.project.internal_id) {
+                self.project.custom_night.slot_index = p.custom_night.slot_index;
+            }
+        }
+
+        // 3. Obtener mods activos
+        let mut active_mods = self.mod_manager.get_active_mods();
+        if active_mods.is_empty() {
+            self.mod_manager.set_active(&self.project.internal_id, true);
+            active_mods = vec![self.project.clone()];
+        }
+
+        self.status_message = format!("Inyectando silenciosamente {} mod(s) y lanzando juego...", active_mods.len());
+        self.status_is_error = false;
+
+        // 4. Inyección silenciosa + Iniciar Frickbear's 3
+        match GameLauncher::build_inject_and_play(
+            &active_mods,
+            &self.project.utmt_scripts_dir,
+            &self.project.game_dir,
+        ) {
+            Ok(msg) => {
+                self.status_is_error = false;
+                self.status_message = msg;
+            }
+            Err(err) => {
+                self.status_is_error = true;
+                self.status_message = err;
+            }
         }
     }
 
@@ -145,6 +198,20 @@ impl eframe::App for FrickEditorApp {
                         .strong()
                         .color(Color32::from_rgb(245, 165, 60)),
                 );
+
+                ui.add_space(10.0);
+                let play_header_btn = egui::Button::new(
+                    RichText::new(format!("{}  PLAY (Jugar)", ic::PLAY))
+                        .size(13.5)
+                        .strong()
+                        .color(Color32::WHITE),
+                )
+                .fill(Color32::from_rgb(220, 95, 20))
+                .min_size(Vec2::new(140.0, 28.0));
+
+                if ui.add(play_header_btn).clicked() {
+                    self.handle_one_click_play();
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(format!("{}  Guardar JSON", ic::FLOPPY_DISK)).clicked() {
@@ -204,7 +271,8 @@ impl eframe::App for FrickEditorApp {
                             let ws = self.project.workspace_dir.clone();
                             match IdeBuilder::import_fbmod_package(&path, &ws) {
                                 Ok(loaded_proj) => {
-                                    self.project = loaded_proj;
+                                    self.project = loaded_proj.clone();
+                                    self.mod_manager.add_or_update_mod(loaded_proj);
                                     self.tex_cache.clear();
                                     self.status_is_error = false;
                                     self.status_message = "Paquete .fbmod importado y descomprimido con éxito.".to_string();
@@ -235,8 +303,14 @@ impl eframe::App for FrickEditorApp {
             ui.separator();
             ui.add_space(4.0);
 
-            // Las 4 Pestañas del Estudio
+            // Las 5 Pestañas del Estudio
             ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut self.active_tab,
+                    ActiveTab::ModManager,
+                    RichText::new(format!("{}  0. Gestor de Mods & PLAY", ic::GAME_CONTROLLER)).size(14.0),
+                );
+                ui.add_space(6.0);
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::Gallery,
@@ -270,14 +344,28 @@ impl eframe::App for FrickEditorApp {
         egui::TopBottomPanel::bottom("footer_panel").show(ctx, |ui| {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let btn = egui::Button::new(
-                    RichText::new(format!("{}  Exportar Todo (Galería, Sprites 640x640 y GML)", ic::ROCKET_LAUNCH))
+                let play_footer_btn = egui::Button::new(
+                    RichText::new(format!("{}  PLAY (Inyectar y Jugar)", ic::PLAY))
                         .size(14.5)
                         .strong()
                         .color(Color32::WHITE),
                 )
-                .fill(Color32::from_rgb(205, 115, 25))
-                .min_size(Vec2::new(340.0, 38.0));
+                .fill(Color32::from_rgb(220, 95, 20))
+                .min_size(Vec2::new(210.0, 38.0));
+
+                if ui.add(play_footer_btn).clicked() {
+                    self.handle_one_click_play();
+                }
+
+                ui.add_space(10.0);
+                let btn = egui::Button::new(
+                    RichText::new(format!("{}  Exportar Todo (Galería, Sprites 640x640 y GML)", ic::ROCKET_LAUNCH))
+                        .size(14.0)
+                        .strong()
+                        .color(Color32::WHITE),
+                )
+                .fill(Color32::from_rgb(180, 100, 25))
+                .min_size(Vec2::new(320.0, 38.0));
 
                 if ui.add(btn).clicked() {
                     match IdeBuilder::build_full_ide_project(&self.project) {
@@ -340,6 +428,7 @@ impl eframe::App for FrickEditorApp {
             ui.add_space(8.0);
 
             egui::ScrollArea::vertical().show(ui, |ui| match self.active_tab {
+                ActiveTab::ModManager => self.ui_mod_manager_tab(ctx, ui),
                 ActiveTab::Gallery => self.ui_gallery_tab(ctx, ui),
                 ActiveTab::SpritesAndGuide => self.ui_sprites_and_audio_tab(ctx, ui),
                 ActiveTab::LiveAnimationPreview => self.ui_live_animation_tab(ctx, ui),
@@ -350,6 +439,341 @@ impl eframe::App for FrickEditorApp {
 }
 
 impl FrickEditorApp {
+    // --------------------------------------------------------------
+    // PESTAÑA 0: GESTOR DE MODS Y LANZADOR DIRECTO (ONE-CLICK PLAY)
+    // --------------------------------------------------------------
+    fn ui_mod_manager_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        // 1. BANNER DE CONFLICTOS
+        let conflicts = self.mod_manager.check_conflicts();
+        if !conflicts.is_empty() {
+            egui::Frame::group(ui.style())
+                .fill(Color32::from_rgb(45, 18, 20))
+                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(230, 70, 70)))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(12.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(ic::WARNING_CIRCLE).size(26.0).color(Color32::from_rgb(245, 80, 80)));
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("¡Se detectaron conflictos en los slots de Custom Night!")
+                                    .strong()
+                                    .color(Color32::WHITE)
+                                    .size(14.5),
+                            );
+                            for c in &conflicts {
+                                ui.label(RichText::new(format!("• {}", c)).color(Color32::from_rgb(255, 190, 190)).size(12.0));
+                            }
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let fix_btn = egui::Button::new(
+                                RichText::new(format!("{} Auto-resolver conflictos", ic::MAGIC_WAND))
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(190, 50, 45));
+                            if ui.add(fix_btn).clicked() {
+                                self.mod_manager.auto_resolve_slots();
+                                self.status_is_error = false;
+                                self.status_message = "Slots reasignados automáticamente a casillas libres (0..31).".to_string();
+                            }
+                        });
+                    });
+                });
+            ui.add_space(8.0);
+        }
+
+        // 2. HERO DASHBOARD: PLAY (ONE-CLICK LAUNCHER)
+        egui::Frame::group(ui.style())
+            .fill(Color32::from_rgb(25, 30, 40))
+            .stroke(Stroke::new(1.2_f32, Color32::from_rgb(50, 75, 110)))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(14.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(format!("{}  PANEL DE JUEGO & INYECCIÓN SILENCIOSA", ic::ROCKET_LAUNCH))
+                                .size(16.5)
+                                .strong()
+                                .color(Color32::from_rgb(245, 165, 60)),
+                        );
+                        let active_count = self.mod_manager.get_active_mods().len();
+                        let total_count = self.mod_manager.installed_mods.len();
+                        ui.label(
+                            RichText::new(format!(
+                                "Selecciona qué animatrónicos estarán activos en tu partida. Al presionar PLAY, FrickEditor unifica el código, ejecuta UndertaleModTool silenciosamente y abre Five Nights at Frickbear's 3.\nAnimatrónicos seleccionados: {} de {}",
+                                active_count, total_count
+                            ))
+                            .size(12.0)
+                            .color(Color32::from_gray(175)),
+                        );
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let play_btn = egui::Button::new(
+                            RichText::new(format!("{}  PLAY (One-Click Play)", ic::PLAY))
+                                .size(16.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgb(225, 95, 20))
+                        .min_size(Vec2::new(230.0, 46.0));
+
+                        if ui.add(play_btn).clicked() {
+                            self.handle_one_click_play();
+                        }
+                    });
+                });
+            });
+
+        ui.add_space(10.0);
+
+        // 3. BARRA DE HERRAMIENTAS
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{}  Animatrónicos Instalados:", ic::STACK)).strong().size(15.0));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(format!("{}  Escanear Carpeta", ic::ARROWS_CLOCKWISE)).clicked() {
+                    let ws = self.project.workspace_dir.clone();
+                    let n = self.mod_manager.scan_mods(&ws);
+                    self.status_is_error = false;
+                    self.status_message = format!("Escaneo completado: {} mods cargados.", n);
+                }
+
+                if ui.button(format!("{}  Importar .fbmod", ic::PLUS_CIRCLE)).clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Paquete Frickbear", &["fbmod", "zip"])
+                        .pick_file()
+                    {
+                        let ws = self.project.workspace_dir.clone();
+                        match self.mod_manager.import_fbmod(&path, &ws) {
+                            Ok(p) => {
+                                self.status_is_error = false;
+                                self.status_message = format!("Mod '{}' importado con éxito.", p.internal_id);
+                            }
+                            Err(e) => {
+                                self.status_is_error = true;
+                                self.status_message = e;
+                            }
+                        }
+                    }
+                }
+
+                if ui.button(format!("{}  Sincronizar Actual", ic::DOWNLOAD_SIMPLE)).clicked() {
+                    self.mod_manager.add_or_update_mod(self.project.clone());
+                    self.status_is_error = false;
+                    self.status_message = format!("Proyecto '{}' sincronizado al gestor.", self.project.internal_id);
+                }
+
+                if ui.button(format!("{}  Auto-resolver Slots", ic::MAGIC_WAND)).clicked() {
+                    self.mod_manager.auto_resolve_slots();
+                    self.status_is_error = false;
+                    self.status_message = "Slots reorganizados automáticamente sin colisiones.".to_string();
+                }
+
+                if ui.button("Desactivar todos").clicked() {
+                    let ids: Vec<String> = self.mod_manager.installed_mods.iter().map(|m| m.internal_id.clone()).collect();
+                    for id in ids {
+                        self.mod_manager.set_active(&id, false);
+                    }
+                }
+
+                if ui.button("Activar todos").clicked() {
+                    let ids: Vec<String> = self.mod_manager.installed_mods.iter().map(|m| m.internal_id.clone()).collect();
+                    for id in ids {
+                        self.mod_manager.set_active(&id, true);
+                    }
+                }
+            });
+        });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // 4. LISTA DE TARJETAS DE ANIMATRÓNICOS
+        let mut to_load = None;
+        let mut to_export = None;
+        let mut to_remove = None;
+        let mut to_toggle = Vec::new();
+        let mut slot_changes = Vec::new();
+        let num_mods = self.mod_manager.installed_mods.len();
+
+        for i in 0..num_mods {
+            let m = &self.mod_manager.installed_mods[i];
+            let id = m.internal_id.clone();
+            let full_name = m.gallery_info.full_name.clone();
+            let arch_name = m.behavior.archetype.display_name();
+            let debut = m.gallery_info.debut.clone();
+            let va = m.gallery_info.va_credit.clone();
+            let mut current_slot = m.custom_night.slot_index;
+            let is_active = *self.mod_manager.active_mods.get(&id).unwrap_or(&false);
+
+            let thumb_path = m.icon_48_path.clone().or_else(|| m.portrait_500_path.clone());
+            let tex = thumb_path.and_then(|p| self.get_or_load_tex(ctx, &p, 48));
+
+            let border_col = if is_active {
+                Color32::from_rgb(60, 180, 95)
+            } else {
+                Color32::from_rgb(60, 65, 75)
+            };
+
+            egui::Frame::group(ui.style())
+                .fill(Color32::from_rgb(24, 27, 34))
+                .stroke(Stroke::new(1.0_f32, border_col))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(10.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // Checkbox de activación
+                        let mut active_flag = is_active;
+                        if ui.checkbox(&mut active_flag, "").changed() {
+                            to_toggle.push((id.clone(), active_flag));
+                        }
+
+                        // Miniatura del personaje
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(16, 18, 22))
+                            .rounding(Rounding::same(4.0))
+                            .show(ui, |ui| {
+                                if let Some(t) = tex {
+                                    ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::new(44.0, 44.0)));
+                                } else {
+                                    ui.allocate_ui(Vec2::new(44.0, 44.0), |ui| {
+                                        ui.centered_and_justified(|ui| {
+                                            ui.label(RichText::new(ic::IMAGE).size(18.0).color(Color32::DARK_GRAY));
+                                        });
+                                    });
+                                }
+                            });
+
+                        ui.add_space(8.0);
+
+                        // Información principal
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(&full_name)
+                                        .strong()
+                                        .color(Color32::WHITE)
+                                        .size(14.5),
+                                );
+                                ui.label(
+                                    RichText::new(format!("({})", id))
+                                        .color(Color32::from_gray(160))
+                                        .size(12.5),
+                                );
+                                if is_active {
+                                    ui.label(
+                                        RichText::new(format!("{} Activo", ic::CHECK_CIRCLE))
+                                            .color(Color32::from_rgb(80, 210, 120))
+                                            .size(11.5),
+                                    );
+                                }
+                            });
+
+                            ui.label(
+                                RichText::new(format!(
+                                    "Arquetipo: {} | Debut: {} | VA: {}",
+                                    arch_name, debut, va
+                                ))
+                                .size(11.0)
+                                .color(Color32::from_gray(150)),
+                            );
+                        });
+
+                        // Configuración del Slot de Custom Night
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("{} Slot:", ic::GRID_FOUR)).strong());
+                            if ui.button("-").clicked() && current_slot > 0 {
+                                current_slot -= 1;
+                                slot_changes.push((i, current_slot));
+                            }
+                            ui.label(
+                                RichText::new(format!("#{}", current_slot + 1))
+                                    .strong()
+                                    .color(Color32::from_rgb(240, 160, 50)),
+                            );
+                            if ui.button("+").clicked() && current_slot < 31 {
+                                current_slot += 1;
+                                slot_changes.push((i, current_slot));
+                            }
+                        });
+
+                        // Botones de acción derecha
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(format!("{} Eliminar", ic::TRASH)).clicked() {
+                                to_remove = Some(id.clone());
+                            }
+
+                            if ui.button(format!("{} Exportar .fbmod", ic::UPLOAD_SIMPLE)).clicked() {
+                                to_export = Some(self.mod_manager.installed_mods[i].clone());
+                            }
+
+                            let edit_btn = egui::Button::new(
+                                RichText::new(format!("{} Editar en Estudio", ic::NOTE_PENCIL))
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(45, 90, 140));
+
+                            if ui.add(edit_btn).clicked() {
+                                to_load = Some(self.mod_manager.installed_mods[i].clone());
+                            }
+                        });
+                    });
+                });
+            ui.add_space(4.0);
+        }
+
+        for (idx, new_slot) in slot_changes {
+            if idx < self.mod_manager.installed_mods.len() {
+                self.mod_manager.installed_mods[idx].custom_night.slot_index = new_slot;
+            }
+        }
+
+        for (id, val) in to_toggle {
+            self.mod_manager.set_active(&id, val);
+        }
+
+        // Manejar acciones diferidas
+        if let Some(loaded) = to_load {
+            self.project = loaded;
+            self.tex_cache.clear();
+            self.active_tab = ActiveTab::Gallery;
+            self.status_is_error = false;
+            self.status_message = format!("Animatrónico '{}' cargado en las pestañas de edición.", self.project.internal_id);
+        }
+
+        if let Some(exp_proj) = to_export {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Frickbear Mod Package", &["fbmod"])
+                .set_file_name(format!("{}.fbmod", exp_proj.internal_id))
+                .save_file()
+            {
+                match IdeBuilder::export_fbmod_package(&exp_proj, &path) {
+                    Ok(msg) => {
+                        self.status_is_error = false;
+                        self.status_message = msg;
+                    }
+                    Err(err) => {
+                        self.status_is_error = true;
+                        self.status_message = err;
+                    }
+                }
+            }
+        }
+
+        if let Some(rem_id) = to_remove {
+            self.mod_manager.remove_mod(&rem_id);
+            self.status_is_error = false;
+            self.status_message = format!("Mod '{}' retirado de la lista.", rem_id);
+        }
+    }
+
     // --------------------------------------------------------------
     // PESTAÑA 1: GALERÍA Y PREVISUALIZACIÓN IN-GAME
     // --------------------------------------------------------------

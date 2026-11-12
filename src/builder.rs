@@ -3,7 +3,7 @@ use image::{imageops, DynamicImage, ImageBuffer, Rgba};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -725,6 +725,405 @@ impl IdeBuilder {
             gml_map.len(),
             csx_name
         ))
+    }
+
+    /// Compila y exporta todos los animatrónicos activos seleccionados en el ModManager,
+    /// generando sus carpetas de sprites, GMLs y el script maestro `master_injector.csx`.
+    pub fn build_all_active_mods(
+        mods: &[AnimatronicProject],
+        game_dir: &Path,
+        utmt_scripts_dir: &Path,
+        headless: bool,
+    ) -> Result<PathBuf, String> {
+        if mods.is_empty() {
+            return Err("No hay animatrónicos activos para construir.".to_string());
+        }
+
+        for proj in mods {
+            let id = proj.internal_id.trim();
+            if id.is_empty() {
+                continue;
+            }
+            Self::build_phase1_visuals(proj)?;
+
+            let gml_dir = proj.workspace_dir.join(format!("{}_GML_Code", id));
+            fs::create_dir_all(&gml_dir).map_err(|e| e.to_string())?;
+            let gml_map = Self::get_effective_gml_scripts(proj);
+            for (filename, content) in &gml_map {
+                fs::write(gml_dir.join(filename), content).map_err(|e| e.to_string())?;
+            }
+        }
+
+        fs::create_dir_all(utmt_scripts_dir).map_err(|e| e.to_string())?;
+        let master_csx_code = Self::generate_master_injector_csx(mods, game_dir, headless);
+        let master_csx_path = utmt_scripts_dir.join("master_injector.csx");
+        fs::write(&master_csx_path, master_csx_code).map_err(|e| e.to_string())?;
+
+        Ok(master_csx_path)
+    }
+
+    /// Genera el script C# `master_injector.csx` combinando todos los animatrónicos activos
+    pub fn generate_master_injector_csx(
+        mods: &[AnimatronicProject],
+        game_dir: &Path,
+        headless: bool,
+    ) -> String {
+        let mut mods_code = String::new();
+        let mut go_create_branches = Vec::new();
+        let mut go_draw_branches = Vec::new();
+
+        for proj in mods {
+            let id = proj.internal_id.trim();
+            if id.is_empty() {
+                continue;
+            }
+            let import_dir = proj.workspace_dir.join(format!("{}_Sprites_To_Import", id));
+            let gml_dir = proj.workspace_dir.join(format!("{}_GML_Code", id));
+            let go_tip = proj.custom_night.gameover_tip.replace('"', "\\\"");
+
+            go_create_branches.push(format!(
+                "if (variable_global_exists(\"{id}Death\") && global.{id}Death) {{ Tip = \"{go_tip}\"; if (variable_global_exists(\"{id}_SavedTime\")) global.TimeLasted = global.{id}_SavedTime; }}"
+            ));
+
+            go_draw_branches.push(format!(
+                "if (variable_global_exists(\"{id}Death\") && global.{id}Death) {{ var spr_alt = asset_get_index(\"s{id}_head_Alt\"); if (spr_alt == -1) spr_alt = asset_get_index(\"s{id}_head\"); if (spr_alt != -1) {{ var sc = 3.2; var sw = sprite_get_width(spr_alt) * sc; var sh = sprite_get_height(spr_alt) * sc; draw_sprite_ext(spr_alt, 0, (640 - sw) / 2, ((360 - sh) / 2) - 10, sc, sc, 0, make_color_rgb(175, 20, 20), 0.9); }} }}"
+            ));
+
+            mods_code.push_str(&format!(
+                r#"
+// ==========================================================
+// Inyección Modular para Animatrónico: {id}
+// ==========================================================
+string importFolder_{id} = @"{import_dir}";
+string codeDir_{id} = @"{gml_dir}";
+
+if (Directory.Exists(importFolder_{id}))
+{{
+    Regex sprFrameRegex = new(@"^(.+?)(?:_(\d+))$", RegexOptions.Compiled);
+    string packDir = Path.Join(ExePath, "Packager");
+    Directory.CreateDirectory(packDir);
+    string outName = Path.Join(packDir, "atlas_{id}_master.txt");
+
+    Packer packer = new Packer();
+    packer.Process(importFolder_{id}, "*.png", 2048, 2, false);
+    packer.SaveAtlasses(outName);
+
+    int lastTextPage = Data.EmbeddedTextures.Count - 1;
+    int lastTextPageItem = Data.TexturePageItems.Count - 1;
+    string prefix = Path.Join(Path.GetDirectoryName(outName), Path.GetFileNameWithoutExtension(outName));
+    int atlasCount = 0;
+
+    foreach (Atlas atlas in packer.Atlasses)
+    {{
+        string atlasName = $"{{prefix}}{{atlasCount:000}}.png";
+        using MagickImage atlasImage = TextureWorker.ReadBGRAImageFromFile(atlasName);
+
+        UndertaleEmbeddedTexture texture = new();
+        texture.Name = new UndertaleString($"Texture {{++lastTextPage}}");
+        texture.TextureData.Image = GMImage.FromMagickImage(atlasImage).ConvertToPng();
+        Data.EmbeddedTextures.Add(texture);
+
+        foreach (Node n in atlas.Nodes)
+        {{
+            if (n.Texture != null)
+            {{
+                UndertaleTexturePageItem texturePageItem = new();
+                texturePageItem.Name = new UndertaleString($"PageItem {{++lastTextPageItem}}");
+                texturePageItem.SourceX = (ushort)n.Bounds.X;
+                texturePageItem.SourceY = (ushort)n.Bounds.Y;
+                texturePageItem.SourceWidth = (ushort)n.Bounds.Width;
+                texturePageItem.SourceHeight = (ushort)n.Bounds.Height;
+                texturePageItem.TargetX = 0;
+                texturePageItem.TargetY = 0;
+                texturePageItem.TargetWidth = (ushort)n.Bounds.Width;
+                texturePageItem.TargetHeight = (ushort)n.Bounds.Height;
+                texturePageItem.BoundingWidth = (ushort)n.Texture.BoundingWidth;
+                texturePageItem.BoundingHeight = (ushort)n.Texture.BoundingHeight;
+                texturePageItem.TexturePage = texture;
+                Data.TexturePageItems.Add(texturePageItem);
+
+                string stripped = Path.GetFileNameWithoutExtension(n.Texture.Source);
+                string spriteName = stripped;
+                int frame = 0;
+                var spriteParts = sprFrameRegex.Match(stripped);
+                if (spriteParts.Success)
+                {{
+                    spriteName = spriteParts.Groups[1].Value;
+                    int.TryParse(spriteParts.Groups[2].Value, out frame);
+                }}
+
+                UndertaleSprite.TextureEntry texentry = new() {{ Texture = texturePageItem }};
+                UndertaleSprite sprite = Data.Sprites.ByName(spriteName);
+                if (sprite is null)
+                {{
+                    UndertaleSprite newSprite = new();
+                    newSprite.Name = Data.Strings.MakeString(spriteName);
+                    newSprite.Width = (uint)n.Texture.BoundingWidth;
+                    newSprite.Height = (uint)n.Texture.BoundingHeight;
+                    newSprite.MarginLeft = 0;
+                    newSprite.MarginRight = n.Bounds.Width - 1;
+                    newSprite.MarginTop = 0;
+                    newSprite.MarginBottom = n.Bounds.Height - 1;
+                    newSprite.OriginX = 0;
+                    newSprite.OriginY = 0;
+                    for (int f = 0; f < frame; f++) newSprite.Textures.Add(null);
+                    newSprite.Textures.Add(texentry);
+                    Data.Sprites.Add(newSprite);
+                }}
+                else
+                {{
+                    sprite.Width = (uint)n.Texture.BoundingWidth;
+                    sprite.Height = (uint)n.Texture.BoundingHeight;
+                    sprite.OriginX = 0;
+                    sprite.OriginY = 0;
+                    while (frame >= sprite.Textures.Count) sprite.Textures.Add(texentry);
+                    sprite.Textures[frame] = texentry;
+                }}
+            }}
+        }}
+        atlasCount++;
+    }}
+}}
+
+UndertaleGameObject objAnim_{id} = Data.GameObjects.ByName("o{id}_BackWindow");
+if (objAnim_{id} == null) {{ objAnim_{id} = new() {{ Name = Data.Strings.MakeString("o{id}_BackWindow"), Visible = true }}; Data.GameObjects.Add(objAnim_{id}); }}
+
+UndertaleGameObject objDeath_{id} = Data.GameObjects.ByName("o{id}_DeathScreen");
+if (objDeath_{id} == null) {{ objDeath_{id} = new() {{ Name = Data.Strings.MakeString("o{id}_DeathScreen"), Visible = true, Persistent = true }}; Data.GameObjects.Add(objDeath_{id}); }}
+
+UndertaleGameObject objCNTile_{id} = Data.GameObjects.ByName("o{id}_CustomNightTile");
+if (objCNTile_{id} == null) {{ objCNTile_{id} = new() {{ Name = Data.Strings.MakeString("o{id}_CustomNightTile"), Visible = true }}; Data.GameObjects.Add(objCNTile_{id}); }}
+
+UndertaleGameObject objReview_{id} = Data.GameObjects.ByName("o{id}_ReviewHandler");
+if (objReview_{id} == null) {{ objReview_{id} = new() {{ Name = Data.Strings.MakeString("o{id}_ReviewHandler"), Visible = true }}; Data.GameObjects.Add(objReview_{id}); }}
+
+importGroup.QueueReplace(objAnim_{id}.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_BackWindow_Create_0.gml")));
+importGroup.QueueReplace(objAnim_{id}.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_BackWindow_Step_0.gml")));
+importGroup.QueueReplace(objAnim_{id}.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_BackWindow_Draw_0.gml")));
+importGroup.QueueReplace(objAnim_{id}.EventHandlerFor(EventType.Draw, EventSubtypeDraw.DrawGUI, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_BackWindow_Draw_64.gml")));
+importGroup.QueueReplace(objAnim_{id}.EventHandlerFor(EventType.CleanUp, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_BackWindow_CleanUp_0.gml")));
+
+importGroup.QueueReplace(objDeath_{id}.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_DeathScreen_Draw_0.gml")));
+importGroup.QueueReplace(objDeath_{id}.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_DeathScreen_Step_0.gml")));
+
+importGroup.QueueReplace(objCNTile_{id}.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_CustomNightTile_Create_0.gml")));
+importGroup.QueueReplace(objCNTile_{id}.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_CustomNightTile_Step_0.gml")));
+importGroup.QueueReplace(objCNTile_{id}.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_CustomNightTile_Draw_0.gml")));
+
+importGroup.QueueReplace(objReview_{id}.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_ReviewHandler_Create_0.gml")));
+importGroup.QueueReplace(objReview_{id}.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_ReviewHandler_Step_0.gml")));
+importGroup.QueueReplace(objReview_{id}.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir_{id}, "gml_Object_o{id}_ReviewHandler_Draw_0.gml")));
+
+AddInstanceToRoom("Office", objAnim_{id}, 0, 0);
+AddInstanceToRoom("Office", objDeath_{id}, 0, 0);
+AddInstanceToRoom("Office", objReview_{id}, 0, 0);
+AddInstanceToRoom("Fredbear_Office", objAnim_{id}, 0, 0);
+AddInstanceToRoom("Fredbear_Office", objReview_{id}, 0, 0);
+AddInstanceToRoom("GameOver", objDeath_{id}, 0, 0);
+AddInstanceToRoom("CustomNightMenu", objCNTile_{id}, 0, 0);
+AddInstanceToRoom("EndlessSelection", objCNTile_{id}, 0, 0);
+AddInstanceToRoom("EndlessShopSelection_FinalNight", objCNTile_{id}, 0, 0);
+"#,
+                id = id,
+                import_dir = import_dir.display(),
+                gml_dir = gml_dir.display(),
+            ));
+        }
+
+        let chained_create = if go_create_branches.is_empty() {
+            "Tip = \"You passed out.\";".to_string()
+        } else {
+            format!("{} else {{ Tip = \"You passed out.\"; }}", go_create_branches.join(" else "))
+        };
+
+        let chained_draw = if go_draw_branches.is_empty() {
+            "if (global.Jumpscare == -1)".to_string()
+        } else {
+            format!("{} else if (global.Jumpscare == -1)", go_draw_branches.join(" else "))
+        };
+
+        let post_injection_msg = if headless {
+            r#"Console.WriteLine("¡INYECCIÓN MASTER COMPLETADA CON ÉXITO!");"#.to_string()
+        } else {
+            format!(
+                r#"ScriptMessage("¡Inyección Master de {} animatrónico(s) completada! data.win guardado.");"#,
+                mods.len()
+            )
+        };
+
+        format!(
+            r#"// ==============================================================
+// Generado automáticamente por FrickEditor IDE — master_injector.csx
+// Multi-Mod Master Injector (Total de animatrónicos activos: {num_mods})
+// ==============================================================
+using System;
+using System.IO;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using UndertaleModLib;
+using UndertaleModLib.Util;
+using UndertaleModLib.Models;
+using ImageMagick;
+
+EnsureDataLoaded();
+
+string gameDir = @"{game_dir}";
+
+void AddInstanceToRoom(string roomName, UndertaleGameObject targetObj, int targetX, int targetY)
+{{
+    UndertaleRoom rm = Data.Rooms.ByName(roomName);
+    if (rm == null) return;
+    foreach (var l in rm.Layers)
+    {{
+        if (l.LayerType == UndertaleRoom.LayerType.Instances && l.InstancesData != null)
+        {{
+            if (!l.InstancesData.Instances.Any(i => i.ObjectDefinition == targetObj))
+            {{
+                l.InstancesData.Instances.Add(new UndertaleRoom.GameObject() {{ InstanceID = Data.GeneralInfo.LastObj++, ObjectDefinition = targetObj, X = targetX, Y = targetY, ScaleX = 1, ScaleY = 1, Color = 0xFFFFFFFF }});
+            }}
+            break;
+        }}
+    }}
+    if (!rm.GameObjects.Any(g => g.ObjectDefinition == targetObj))
+    {{
+        rm.GameObjects.Add(new UndertaleRoom.GameObject() {{ InstanceID = Data.GeneralInfo.LastObj++, ObjectDefinition = targetObj, X = targetX, Y = targetY, ScaleX = 1, ScaleY = 1, Color = 0xFFFFFFFF }});
+    }}
+}}
+
+UndertaleModLib.Compiler.CodeImportGroup importGroup = new(Data) {{ AutoCreateAssets = true, MainThreadAction = MainThreadAction }};
+
+{mods_code}
+
+// Parcheo conjunto de GameOver (Create_0)
+var goCreate = Data.Code.ByName("gml_Object_oGameOver_Create_0");
+if (goCreate != null)
+{{
+    try
+    {{
+        string decomp = new Underanalyzer.Decompiler.DecompileContext(new UndertaleModLib.Decompiler.GlobalDecompileContext(Data), goCreate, Data.ToolInfo.DecompilerSettings).DecompileToString();
+        string target = "Tip = \"You passed out.\";";
+        if (decomp.Contains(target)) importGroup.QueueReplace(goCreate, decomp.Replace(target, @"{chained_create}"));
+    }}
+    catch {{ }}
+}}
+
+// Parcheo conjunto de GameOver (Draw_0)
+var goDraw = Data.Code.ByName("gml_Object_oGameOver_Draw_0");
+if (goDraw != null)
+{{
+    try
+    {{
+        string decomp = new Underanalyzer.Decompiler.DecompileContext(new UndertaleModLib.Decompiler.GlobalDecompileContext(Data), goDraw, Data.ToolInfo.DecompilerSettings).DecompileToString();
+        string target = "if (global.Jumpscare == -1)";
+        if (decomp.Contains(target)) importGroup.QueueReplace(goDraw, decomp.Replace(target, @"{chained_draw}"));
+    }}
+    catch {{ }}
+}}
+
+importGroup.Import();
+
+// Guardado automático en data.win
+try
+{{
+    string targetWin = Path.Combine(gameDir, "data.win");
+    using (FileStream fs = new FileStream(targetWin, FileMode.Create, FileAccess.Write))
+    {{
+        UndertaleIO.Write(fs, Data);
+    }}
+    Console.WriteLine("data.win guardado exitosamente en: " + targetWin);
+}}
+catch (Exception ex)
+{{
+    Console.WriteLine("Aviso al guardar data.win: " + ex.Message);
+}}
+
+{post_injection_msg}
+
+// Clases del Atlas Packer
+public class TextureInfo {{ public string Source; public int Width; public int Height; public int TargetX; public int TargetY; public int BoundingWidth; public int BoundingHeight; public MagickImage Image; }}
+public enum SplitType {{ Horizontal, Vertical }}
+public struct Rect {{ public int X {{ get; set; }} public int Y {{ get; set; }} public int Width {{ get; set; }} public int Height {{ get; set; }} }}
+public class Node {{ public Rect Bounds; public TextureInfo Texture; public SplitType SplitType; }}
+public class Atlas {{ public int Width; public int Height; public List<Node> Nodes; }}
+public class Packer
+{{
+    public List<TextureInfo> SourceTextures = new List<TextureInfo>();
+    public int Padding;
+    public int AtlasSize;
+    public List<Atlas> Atlasses;
+    public void Process(string _SourceDir, string _Pattern, int _AtlasSize, int _Padding, bool _DebugMode)
+    {{
+        Padding = _Padding; AtlasSize = _AtlasSize;
+        DirectoryInfo di = new(_SourceDir);
+        foreach (FileInfo fi in di.GetFiles(_Pattern, SearchOption.AllDirectories))
+        {{
+            MagickImage img = new(fi.FullName);
+            SourceTextures.Add(new TextureInfo {{ Source = fi.FullName, Width = (int)img.Width, Height = (int)img.Height, BoundingWidth = (int)img.Width, BoundingHeight = (int)img.Height, TargetX = 0, TargetY = 0, Image = img }});
+        }}
+        List<TextureInfo> textures = SourceTextures.ToList();
+        Atlasses = new List<Atlas>();
+        while (textures.Count > 0)
+        {{
+            Atlas atlas = new Atlas() {{ Width = _AtlasSize, Height = _AtlasSize }};
+            List<TextureInfo> leftovers = LayoutAtlas(textures, atlas);
+            Atlasses.Add(atlas);
+            textures = leftovers;
+        }}
+    }}
+    public void SaveAtlasses(string _Destination)
+    {{
+        int atlasCount = 0;
+        string prefix = Path.Join(Path.GetDirectoryName(_Destination), Path.GetFileNameWithoutExtension(_Destination));
+        foreach (Atlas atlas in Atlasses)
+        {{
+            string atlasName = $"{{prefix}}{{atlasCount:000}}.png";
+            using MagickImage img = new(MagickColors.Transparent, (uint)atlas.Width, (uint)atlas.Height);
+            foreach (Node n in atlas.Nodes)
+            {{
+                if (n.Texture != null)
+                {{
+                    using IMagickImage<byte> res = TextureWorker.ResizeImage(n.Texture.Image, n.Bounds.Width, n.Bounds.Height);
+                    img.Composite(res, n.Bounds.X, n.Bounds.Y, CompositeOperator.Copy);
+                }}
+            }}
+            TextureWorker.SaveImageToFile(img, atlasName);
+            atlasCount++;
+        }}
+    }}
+    private List<TextureInfo> LayoutAtlas(List<TextureInfo> _Textures, Atlas _Atlas)
+    {{
+        List<Node> freeList = new List<Node>();
+        List<TextureInfo> textures = _Textures.ToList();
+        _Atlas.Nodes = new List<Node>();
+        freeList.Add(new Node {{ Bounds = new Rect {{ Width = _Atlas.Width, Height = _Atlas.Height }}, SplitType = SplitType.Horizontal }});
+        while (freeList.Count > 0 && textures.Count > 0)
+        {{
+            Node node = freeList[0]; freeList.RemoveAt(0);
+            TextureInfo bestFit = textures.FirstOrDefault(ti => ti.Width <= node.Bounds.Width && ti.Height <= node.Bounds.Height);
+            if (bestFit != null)
+            {{
+                Node n1 = new Node {{ Bounds = new Rect {{ X = node.Bounds.X + bestFit.Width + Padding, Y = node.Bounds.Y, Width = node.Bounds.Width - bestFit.Width - Padding, Height = bestFit.Height }}, SplitType = SplitType.Vertical }};
+                Node n2 = new Node {{ Bounds = new Rect {{ X = node.Bounds.X, Y = node.Bounds.Y + bestFit.Height + Padding, Width = node.Bounds.Width, Height = node.Bounds.Height - bestFit.Height - Padding }}, SplitType = SplitType.Horizontal }};
+                if (n1.Bounds.Width > 0 && n1.Bounds.Height > 0) freeList.Add(n1);
+                if (n2.Bounds.Width > 0 && n2.Bounds.Height > 0) freeList.Add(n2);
+                node.Texture = bestFit; node.Bounds.Width = bestFit.Width; node.Bounds.Height = bestFit.Height;
+                textures.Remove(bestFit);
+            }}
+            _Atlas.Nodes.Add(node);
+        }}
+        return textures;
+    }}
+}}
+"#,
+            num_mods = mods.len(),
+            game_dir = game_dir.display(),
+            mods_code = mods_code,
+            chained_create = chained_create.replace('"', "\"\""),
+            chained_draw = chained_draw.replace('"', "\"\""),
+            post_injection_msg = post_injection_msg,
+        )
     }
 
     /// Genera el script .csx COMPLETO (con Atlas Packer anti-pepinillos, Inyección en 6 Salas y Parcheo de oGameOver)
