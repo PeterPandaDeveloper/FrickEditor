@@ -381,7 +381,13 @@ impl Default for AdvancedMechanicsConfig {
 
 impl Default for AnimatronicProject {
     fn default() -> Self {
-        let base_assets = PathBuf::from(r"D:\Frickbears-mod\Murray_Assets");
+        let base_assets = if PathBuf::from("assets/sample_murray").exists() {
+            PathBuf::from("assets/sample_murray")
+        } else if PathBuf::from(r"D:\Frickbears-mod\Murray_Assets").exists() {
+            PathBuf::from(r"D:\Frickbears-mod\Murray_Assets")
+        } else {
+            PathBuf::from("assets/sample_murray")
+        };
         let auto_file = |name: &str| -> Option<PathBuf> {
             let p = base_assets.join(name);
             if p.exists() { Some(p) } else { None }

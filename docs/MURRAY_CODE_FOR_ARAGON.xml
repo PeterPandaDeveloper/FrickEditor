@@ -1,0 +1,1378 @@
+<?xml version="1.0" encoding="utf-8"?>
+<frickbears_mod target="Five Nights at Frickbear's 3 + 4LD v2.0.2" animatronic="Murray Moose" version="V18">
+  <architecture_summary>
+    <engine>GameMaker LTS VM (bytecode)</engine>
+    <tool>UndertaleModTool v0.9.2.0</tool>
+    <active_roster>Vanilla static array of 56 characters preserved intact. Murray uses global.CustomNight_Page = 1.</active_roster>
+    <bugs_to_fix>
+      <bug id="1" name="Mod Gallery White Box">addons/Murray/ missing 48x48 icon.png. Requires icon.png (48x48) + portrait.png (500x500) + extras_info.txt without extra large images to prevent sprite_merge crash.</bug>
+      <bug id="2" name="Game Over Time Lasted 0:00.00">gml_Object_oGameOver_Draw_0 reads global.TimeLasted. Murray transitions directly with room_goto(GameOver) without formatting global.TimeLasted from global.TimerMinutes, TimerSeconds, TimerDecimal.</bug>
+      <bug id="3" name="Jumpscare Quad Seams">sMurray_Jumpscare texture coords were hacked in CSX atlas packer and drawn in 2 layers in Draw_64 with offsets. Solution: pre-composite into full 640x640 single frames and draw_sprite_ext in 1 call.</bug>
+      <bug id="4" name="Sound Purge">Only allow window knock: murray_knock.ogg (sfxKnock). Strip all extra voice/grunt/breathing lines.</bug>
+      <bug id="5" name="Blind Invariant">Murray NEVER forces window blinds open (my_blind.Open = true forbidden). Pauses attack if blind is closed.</bug>
+      <bug id="6" name="Custom Night Layout">Quick buttons [-1][+1][0][20] collide with description text in Page 1. Modded button in vanilla grid looks unpolished.</bug>
+    </bugs_to_fix>
+  </architecture_summary>
+  <gml_scripts>
+    <file name="gml_Object_oMurray_BackWindow_CleanUp_0.gml">
+<![CDATA[
+if (variable_instance_exists(id, "MurrayBody") && MurrayBody != noone && instance_exists(MurrayBody)) {
+    instance_destroy(MurrayBody);
+    MurrayBody = noone;
+}
+if (variable_instance_exists(id, "MurrayHead") && MurrayHead != noone && instance_exists(MurrayHead)) {
+    instance_destroy(MurrayHead);
+    MurrayHead = noone;
+}
+if (variable_instance_exists(id, "MurrayGlasses") && MurrayGlasses != noone && instance_exists(MurrayGlasses)) {
+    instance_destroy(MurrayGlasses);
+    MurrayGlasses = noone;
+}
+]]>
+    </file>
+    <file name="gml_Object_oMurray_BackWindow_Create_0.gml">
+<![CDATA[
+global.MurrayDeath = false;
+MurrayBody = noone;
+MurrayHead = noone;
+MurrayGlasses = noone;
+var ai = 20;
+if (variable_global_exists("Murray_AI")) {
+    ai = clamp(global.Murray_AI, 0, 20);
+}
+if (variable_global_exists("Murray_Disabled") && global.Murray_Disabled) {
+    ai = 0;
+}
+if (ai == 0 && variable_global_exists("EndlessMode") && global.EndlessMode == true) {
+    ai = 10;
+} else if (ai == 0 && variable_global_exists("FourLayersDown") && global.FourLayersDown == true) {
+    ai = 12;
+}
+if (ai <= 0) {
+    instance_destroy();
+    exit;
+}
+state = 0;
+attack_timer = round(lerp(600, 320, ai / 20.0));
+knock_timer = irandom_range(round(lerp(480, 180, ai / 20.0)), round(lerp(900, 360, ai / 20.0)));
+has_glasses = true;
+glasses_flying = false;
+glasses_vx = 0;
+glasses_vy = 0;
+blind_fade = 0;
+jumpscare_timer = 0;
+jumpscare_frame = 0;
+remove_cooldown = 0;
+head_recoil_x = 0;
+head_recoil_y = 0;
+breath_timer = 0;
+breath_alpha = 0.0;
+glare_timer = 0;
+]]>
+    </file>
+    <file name="gml_Object_oMurray_BackWindow_Draw_0.gml">
+<![CDATA[
+
+]]>
+    </file>
+    <file name="gml_Object_oMurray_BackWindow_Draw_64.gml">
+<![CDATA[
+if (state == 4) {
+    var s_jump = asset_get_index("sMurray_Jumpscare");
+    if (s_jump != -1) {
+        var gw = display_get_gui_width();
+        var gh = display_get_gui_height();
+        var lunge_t = clamp(jumpscare_timer / 28.0, 0.0, 1.0);
+        var lunge_curve = power(lunge_t, 0.45);
+        var base_gui = max(gw / 640.0, gh / 360.0);
+        var zoom_factor = lerp(0.50, 1.38, lunge_curve);
+        var scale = base_gui * zoom_factor;
+        var sw = 640.0 * scale;
+        var start_x = gw * 0.12;
+        var start_y = gh * 0.15;
+        var cur_lunge_x = lerp(start_x, 0.0, lunge_curve);
+        var cur_lunge_y = lerp(start_y, 0.0, lunge_curve);
+        var shake_intensity = lerp(3.0, 13.0, lunge_curve) * (gw / 640.0);
+        var shake_x = irandom_range(-round(shake_intensity), round(shake_intensity));
+        var shake_y = irandom_range(-round(shake_intensity), round(shake_intensity));
+        var head_sub = 1 + (floor(jumpscare_timer / 3) % 2);
+        if (jumpscare_timer > 65) {
+            head_sub = 2;
+        }
+        var jaw_snap = sin(jumpscare_timer * 1.8) * (5.5 * scale);
+        var draw_x = ((gw - sw) / 2) + cur_lunge_x + shake_x;
+        var draw_y = ((gh / 2) - (275.0 * scale)) + cur_lunge_y + shake_y;
+        draw_sprite_ext(s_jump, 0, draw_x, draw_y, scale, scale, 0, c_white, 1);
+        draw_sprite_ext(s_jump, head_sub, draw_x, draw_y + jaw_snap, scale, scale, 0, c_white, 1);
+    }
+}
+]]>
+    </file>
+    <file name="gml_Object_oMurray_BackWindow_Step_0.gml">
+<![CDATA[
+var cx = 1456;
+var cy = 1088;
+var my_blind = instance_nearest(cx, cy, oWindowBlinds);
+var deathcoined = false;
+if (variable_global_exists("Murray_DeathCoined") && global.Murray_DeathCoined) deathcoined = true;
+if (variable_global_exists("Murray_Disabled") && global.Murray_Disabled) deathcoined = true;
+if (variable_global_exists("DeathCoin_Target") && global.DeathCoin_Target == "Murray") deathcoined = true;
+if (state == 1 && mouse_check_button_pressed(mb_left)) {
+    if (variable_global_exists("HeldItem") && (global.HeldItem == "DeathCoin" || global.HeldItem == "Death Coin" || global.HeldItem == "oShopItem_DeathCoin")) {
+        deathcoined = true;
+    }
+}
+if (deathcoined) {
+    if (MurrayBody != noone && instance_exists(MurrayBody)) { instance_destroy(MurrayBody); MurrayBody = noone; }
+    if (MurrayHead != noone && instance_exists(MurrayHead)) { instance_destroy(MurrayHead); MurrayHead = noone; }
+    if (MurrayGlasses != noone && instance_exists(MurrayGlasses)) { instance_destroy(MurrayGlasses); MurrayGlasses = noone; }
+    glasses_flying = false;
+    var snd_dc = asset_get_index("sfxDeathCoin");
+    if (snd_dc == -1) snd_dc = asset_get_index("sfxIgnitedFreddy_Hit1");
+    if (snd_dc != -1) audio_play_sound(snd_dc, 10, false);
+    global.Murray_DeathCoined = true;
+    global.Murray_Disabled = true;
+    instance_destroy();
+    exit;
+}
+if (glasses_flying && MurrayGlasses != noone && instance_exists(MurrayGlasses)) {
+    MurrayGlasses.x += glasses_vx;
+    MurrayGlasses.y += glasses_vy;
+    glasses_vy += 1.2;
+    if (MurrayGlasses.y > 1300) {
+        instance_destroy(MurrayGlasses);
+        MurrayGlasses = noone;
+        glasses_flying = false;
+    }
+}
+if (state == 0) {
+    if (MurrayBody != noone && instance_exists(MurrayBody)) { instance_destroy(MurrayBody); MurrayBody = noone; }
+    if (MurrayHead != noone && instance_exists(MurrayHead)) { instance_destroy(MurrayHead); MurrayHead = noone; }
+    if (MurrayGlasses != noone && instance_exists(MurrayGlasses)) { instance_destroy(MurrayGlasses); MurrayGlasses = noone; }
+    glasses_flying = false;
+    knock_timer--;
+    if (knock_timer <= 0) {
+        state = 1;
+        var ai = 20;
+        if (variable_global_exists("Murray_AI")) ai = clamp(global.Murray_AI, 0, 20);
+        attack_timer = round(lerp(600, 320, ai / 20.0));
+        has_glasses = true;
+        remove_cooldown = 0;
+        head_recoil_x = 0;
+        head_recoil_y = 0;
+        var spr_body = asset_get_index("sMurray_body");
+        var spr_head = asset_get_index("sMurray_head");
+        var spr_glasses = asset_get_index("sMurray_Glasses");
+        MurrayBody = instance_create_layer(cx - 92, cy + 70, "Behind_Wall", oOfficeSprite);
+        if (spr_body != -1) MurrayBody.sprite_index = spr_body;
+        MurrayBody.DrawDepth = 48;
+        MurrayHead = instance_create_layer(cx - 77, cy, "Behind_Wall", oOfficeSprite);
+        if (spr_head != -1) MurrayHead.sprite_index = spr_head;
+        MurrayHead.DrawDepth = 50;
+        MurrayGlasses = instance_create_layer(cx - 77 + 52, cy + 48, "Behind_Wall", oOfficeSprite);
+        if (spr_glasses != -1) MurrayGlasses.sprite_index = spr_glasses;
+        MurrayGlasses.DrawDepth = 52;
+        var snd = asset_get_index("snd_murray_knock");
+        if (snd == -1) snd = asset_get_index("sfxKnock");
+        if (snd == -1) snd = asset_get_index("snd_Knock");
+        if (snd != -1) {
+            audio_play_sound(snd, 10, false);
+        } else if (file_exists("snd_murray_knock.ogg")) {
+            var stream_k = audio_create_stream("snd_murray_knock.ogg");
+            audio_play_sound(stream_k, 10, false);
+        }
+    }
+}
+if (state == 1) {
+    var blind_closed = false;
+    if (instance_exists(my_blind)) {
+        if (!my_blind.Open) blind_closed = true;
+    }
+    if (!blind_closed) {
+        attack_timer--;
+    }
+    if (remove_cooldown > 0) {
+        remove_cooldown--;
+    }
+    head_recoil_x = lerp(head_recoil_x, 0, 0.15);
+    head_recoil_y = lerp(head_recoil_y, 0, 0.15);
+    var torso_bob = sin(current_time * 0.003) * 2.0;
+    if (MurrayBody != noone && instance_exists(MurrayBody)) {
+        MurrayBody.y = (cy + 70) + torso_bob;
+    }
+    if (MurrayHead != noone && instance_exists(MurrayHead)) {
+        var head_bob = sin(current_time * 0.004) * 2.5;
+        var jitter_x = has_glasses ? 0 : random_range(-1.2, 1.2);
+        var jitter_y = has_glasses ? 0 : random_range(-1.2, 1.2);
+        MurrayHead.x = (cx - 77) + head_recoil_x + jitter_x;
+        MurrayHead.y = cy + head_bob + head_recoil_y + jitter_y;
+        if (has_glasses && MurrayGlasses != noone && instance_exists(MurrayGlasses)) {
+            MurrayGlasses.x = MurrayHead.x + 52;
+            MurrayGlasses.y = MurrayHead.y + 48;
+        }
+    }
+    var hover_murray = false;
+    if (instance_exists(o3DMouse)) {
+        if (point_distance(cx, cy + 70, o3DMouse.x, o3DMouse.y) < 180) hover_murray = true;
+    }
+    var flashing = false;
+    if (keyboard_check(ord("F")) || mouse_check_button(mb_right)) flashing = true;
+    if (variable_global_exists("Flashlight") && global.Flashlight) flashing = true;
+    if (variable_global_exists("flashlight") && global.flashlight) flashing = true;
+    if (has_glasses && flashing && !blind_closed && hover_murray) {
+        attack_timer = max(20, attack_timer - 1);
+    }
+    var remove_pressed = mouse_check_button_pressed(mb_right) || keyboard_check_pressed(ord("G")) || keyboard_check_pressed(ord("E")) || (hover_murray && mouse_check_button_pressed(mb_left));
+    var blinds_flash_shock = (blind_closed && flashing);
+    if (has_glasses && (remove_pressed || blinds_flash_shock)) {
+        has_glasses = false;
+        glasses_flying = true;
+        glasses_vx = choose(-6, 6);
+        glasses_vy = -8;
+        remove_cooldown = 20;
+        head_recoil_x = (glasses_vx > 0 ? 14 : -14);
+        head_recoil_y = -7;
+        var spr_scare = asset_get_index("sMurray_head_Scare");
+        if (spr_scare != -1 && MurrayHead != noone && instance_exists(MurrayHead)) {
+            MurrayHead.sprite_index = spr_scare;
+        }
+        var snd_click = asset_get_index("sfxClick");
+        if (snd_click == -1) snd_click = asset_get_index("snd_Button");
+        if (snd_click != -1) audio_play_sound(snd_click, 10, false);
+        var snd_v = asset_get_index("snd_murray_voice");
+        if (snd_v != -1) {
+            audio_play_sound(snd_v, 10, false);
+        } else if (file_exists("snd_murray_voice.ogg")) {
+            var stream_v = audio_create_stream("snd_murray_voice.ogg");
+            audio_play_sound(stream_v, 10, false);
+        }
+    }
+    if (!has_glasses && !blind_closed && flashing && remove_cooldown <= 0 && hover_murray) {
+        state = 2;
+        blind_fade = 60;
+        if (MurrayBody != noone && instance_exists(MurrayBody)) {
+            instance_destroy(MurrayBody);
+            MurrayBody = noone;
+        }
+        if (MurrayGlasses != noone && instance_exists(MurrayGlasses)) {
+            instance_destroy(MurrayGlasses);
+            MurrayGlasses = noone;
+        }
+        glasses_flying = false;
+        var spr_flash = asset_get_index("sMurray_Flash");
+        if (MurrayHead != noone && instance_exists(MurrayHead)) {
+            if (spr_flash != -1) MurrayHead.sprite_index = spr_flash;
+            MurrayHead.x = cx - 94;
+            MurrayHead.y = cy;
+            MurrayHead.DrawDepth = 54;
+        }
+        var snd_hit = asset_get_index("sfxIgnitedFreddy_Hit1");
+        if (snd_hit == -1) snd_hit = asset_get_index("sfxFlash");
+        if (snd_hit != -1) audio_play_sound(snd_hit, 10, false);
+        var snd_v = asset_get_index("snd_murray_voice");
+        if (snd_v != -1) {
+            audio_play_sound(snd_v, 10, false);
+        } else if (file_exists("snd_murray_voice.ogg")) {
+            var stream_v = audio_create_stream("snd_murray_voice.ogg");
+            audio_play_sound(stream_v, 10, false);
+        }
+    }
+    if (attack_timer <= 0 && !blind_closed) {
+        state = 4;
+        jumpscare_timer = 0;
+        jumpscare_frame = 0;
+        glasses_flying = false;
+        if (MurrayBody != noone && instance_exists(MurrayBody)) { instance_destroy(MurrayBody); MurrayBody = noone; }
+        if (MurrayHead != noone && instance_exists(MurrayHead)) { instance_destroy(MurrayHead); MurrayHead = noone; }
+        if (MurrayGlasses != noone && instance_exists(MurrayGlasses)) { instance_destroy(MurrayGlasses); MurrayGlasses = noone; }
+        var scream = asset_get_index("sfxJumpscareNormal");
+        if (scream == -1) scream = asset_get_index("sfxWindowScare");
+        if (scream != -1) audio_play_sound(scream, 10, false);
+    }
+}
+if (state == 2) {
+    blind_fade--;
+    if (blind_fade <= 0) {
+        state = 0;
+        var ai = 20;
+        if (variable_global_exists("Murray_AI")) ai = clamp(global.Murray_AI, 0, 20);
+        knock_timer = irandom_range(round(lerp(1800, 600, ai / 20.0)), round(lerp(2800, 1000, ai / 20.0)));
+        if (MurrayHead != noone && instance_exists(MurrayHead)) {
+            instance_destroy(MurrayHead);
+            MurrayHead = noone;
+        }
+    }
+}
+if (state == 4) {
+    jumpscare_timer++;
+    jumpscare_frame = (floor(jumpscare_timer / 4) % 3);
+    if (jumpscare_timer >= 85) {
+        global.MurrayDeath = true;
+        global.Jumpscare = -1;
+        var r_go = asset_get_index("GameOver");
+        if (r_go != -1) room_goto(r_go);
+        else game_restart();
+    }
+}
+]]>
+    </file>
+    <file name="gml_Object_oMurray_CustomNightTile_Create_0.gml">
+<![CDATA[
+depth = -1000;
+if (!variable_global_exists("Murray_AI")) {
+    global.Murray_AI = 0;
+}
+if (!variable_global_exists("CustomNight_Page")) {
+    global.CustomNight_Page = 0;
+}
+btn_vanilla_x = 340;
+btn_vanilla_y = 324;
+btn_vanilla_w = 126;
+btn_vanilla_h = 28;
+btn_back_x = 306;
+btn_back_y = 13;
+btn_back_w = 150;
+btn_back_h = 18;
+tile_x = 28;
+tile_y = 48;
+card_x = 88;
+card_y = 46;
+card_w = 368;
+card_h = 142;
+btn_m1_x = card_x + 204;
+btn_p1_x = card_x + 240;
+btn_0_x  = card_x + 284;
+btn_20_x = card_x + 320;
+btn_ai_y = card_y + 114;
+btn_ai_w = 32;
+btn_ai_h = 20;
+prev_freddy_ai = -1;
+]]>
+    </file>
+    <file name="gml_Object_oMurray_CustomNightTile_Draw_0.gml">
+<![CDATA[
+var fnt = asset_get_index("fnt_Small");
+if (fnt == -1) fnt = asset_get_index("fnt_Dialogue");
+if (fnt != -1) draw_set_font(fnt);
+if (global.CustomNight_Page == 0) {
+    var hov_van = (mouse_x >= btn_vanilla_x && mouse_x <= btn_vanilla_x + btn_vanilla_w && mouse_y >= btn_vanilla_y && mouse_y <= btn_vanilla_y + btn_vanilla_h);
+    draw_set_color(hov_van ? make_color_rgb(230, 230, 230) : make_color_rgb(205, 205, 205));
+    draw_rectangle(btn_vanilla_x, btn_vanilla_y, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y + btn_vanilla_h, false);
+    if (hov_van && mouse_check_button(mb_left)) {
+        draw_set_color(make_color_rgb(80, 80, 80));
+        draw_line(btn_vanilla_x, btn_vanilla_y, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y);
+        draw_line(btn_vanilla_x, btn_vanilla_y, btn_vanilla_x, btn_vanilla_y + btn_vanilla_h);
+        draw_set_color(c_white);
+        draw_line(btn_vanilla_x, btn_vanilla_y + btn_vanilla_h, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y + btn_vanilla_h);
+        draw_line(btn_vanilla_x + btn_vanilla_w, btn_vanilla_y, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y + btn_vanilla_h);
+    } else {
+        draw_set_color(c_white);
+        draw_line(btn_vanilla_x, btn_vanilla_y, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y);
+        draw_line(btn_vanilla_x, btn_vanilla_y, btn_vanilla_x, btn_vanilla_y + btn_vanilla_h);
+        draw_set_color(make_color_rgb(80, 80, 80));
+        draw_line(btn_vanilla_x, btn_vanilla_y + btn_vanilla_h, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y + btn_vanilla_h);
+        draw_line(btn_vanilla_x + btn_vanilla_w, btn_vanilla_y, btn_vanilla_x + btn_vanilla_w, btn_vanilla_y + btn_vanilla_h);
+    }
+    draw_set_color(c_black);
+    draw_rectangle(btn_vanilla_x - 1, btn_vanilla_y - 1, btn_vanilla_x + btn_vanilla_w + 1, btn_vanilla_y + btn_vanilla_h + 1, true);
+    draw_set_halign(fa_center);
+    draw_set_valign(fa_middle);
+    draw_text(btn_vanilla_x + (btn_vanilla_w / 2), btn_vanilla_y + (btn_vanilla_h / 2), "MODDED (1) >");
+}
+else if (global.CustomNight_Page == 1) {
+    draw_set_color(make_color_rgb(175, 175, 175));
+    draw_rectangle(0, 0, 474, 360, false);
+    var win_x = 10;
+    var win_y = 10;
+    var win_w = 454;
+    var win_h = 340;
+    draw_set_color(make_color_rgb(198, 198, 198));
+    draw_rectangle(win_x, win_y, win_x + win_w, win_y + win_h, false);
+    draw_set_color(c_white);
+    draw_line(win_x, win_y, win_x + win_w, win_y);
+    draw_line(win_x, win_y, win_x, win_y + win_h);
+    draw_set_color(make_color_rgb(60, 60, 60));
+    draw_line(win_x, win_y + win_h, win_x + win_w, win_y + win_h);
+    draw_line(win_x + win_w, win_y, win_x + win_w, win_y + win_h);
+    draw_set_color(c_black);
+    draw_rectangle(win_x - 1, win_y - 1, win_x + win_w + 1, win_y + win_h + 1, true);
+    draw_set_color(make_color_rgb(0, 0, 128));
+    draw_rectangle(win_x + 3, win_y + 3, win_x + win_w - 3, win_y + 24, false);
+    draw_set_color(c_white);
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_middle);
+    draw_text(win_x + 8, win_y + 13, "MODDED ANIMATRONICS - ROSTER (PAGE 1)");
+    var hov_back = (mouse_x >= btn_back_x && mouse_x <= btn_back_x + btn_back_w && mouse_y >= btn_back_y && mouse_y <= btn_back_y + btn_back_h);
+    draw_set_color(hov_back ? make_color_rgb(230, 230, 230) : make_color_rgb(205, 205, 205));
+    draw_rectangle(btn_back_x, btn_back_y, btn_back_x + btn_back_w, btn_back_y + btn_back_h, false);
+    draw_set_color(hov_back && mouse_check_button(mb_left) ? make_color_rgb(80, 80, 80) : c_white);
+    draw_line(btn_back_x, btn_back_y, btn_back_x + btn_back_w, btn_back_y);
+    draw_line(btn_back_x, btn_back_y, btn_back_x, btn_back_y + btn_back_h);
+    draw_set_color(hov_back && mouse_check_button(mb_left) ? c_white : make_color_rgb(80, 80, 80));
+    draw_line(btn_back_x, btn_back_y + btn_back_h, btn_back_x + btn_back_w, btn_back_y + btn_back_h);
+    draw_line(btn_back_x + btn_back_w, btn_back_y, btn_back_x + btn_back_w, btn_back_y + btn_back_h);
+    draw_set_color(c_black);
+    draw_rectangle(btn_back_x - 1, btn_back_y - 1, btn_back_x + btn_back_w + 1, btn_back_y + btn_back_h + 1, true);
+    draw_set_halign(fa_center);
+    draw_set_valign(fa_middle);
+    draw_set_color(c_black);
+    draw_text(btn_back_x + (btn_back_w / 2), btn_back_y + (btn_back_h / 2), "< VANILLA ROSTER");
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    draw_set_color(make_color_rgb(50, 50, 50));
+    draw_text(win_x + 10, win_y + 28, "Adjust AI difficulty (0-20). Click tile, arrows, scroll wheel or quick buttons.");
+    var spr_base = asset_get_index("sTileBase");
+    if (spr_base != -1) draw_sprite(spr_base, 0, tile_x, tile_y);
+    var spr_murray = asset_get_index("sTile_Murray");
+    if (spr_murray != -1) {
+        var is_dc = false;
+        if (variable_global_exists("Murray_DeathCoined") && global.Murray_DeathCoined) is_dc = true;
+        if (variable_global_exists("Murray_Disabled") && global.Murray_Disabled) is_dc = true;
+        if (global.Murray_AI > 0 && !is_dc) {
+            draw_sprite(spr_murray, 0, tile_x, tile_y);
+        } else {
+            var spr_off = asset_get_index("sTile_Murray_1");
+            if (spr_off != -1) {
+                draw_sprite(spr_off, 0, tile_x, tile_y);
+            } else if (sprite_get_number(spr_murray) > 1) {
+                draw_sprite(spr_murray, 1, tile_x, tile_y);
+            } else {
+                draw_sprite_ext(spr_murray, 0, tile_x, tile_y, 1, 1, 0, make_color_rgb(130, 130, 130), 0.75);
+            }
+        }
+    }
+    var spr_arrows = asset_get_index("sCustomNightArrows");
+    if (spr_arrows != -1) draw_sprite(spr_arrows, 0, tile_x, tile_y + 48);
+    var spr_counter = asset_get_index("sCustomNightCounter");
+    if (spr_counter != -1) draw_sprite(spr_counter, global.Murray_AI, tile_x + 16, tile_y + 48);
+    draw_set_color(make_color_rgb(240, 240, 240));
+    draw_rectangle(card_x, card_y, card_x + card_w, card_y + card_h, false);
+    draw_set_color(make_color_rgb(120, 120, 120));
+    draw_line(card_x, card_y, card_x + card_w, card_y);
+    draw_line(card_x, card_y, card_x, card_y + card_h);
+    draw_set_color(c_white);
+    draw_line(card_x, card_y + card_h, card_x + card_w, card_y + card_h);
+    draw_line(card_x + card_w, card_y, card_x + card_w, card_y + card_h);
+    draw_set_color(c_black);
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    draw_text(card_x + 8, card_y + 6, "MURRAY MOOSE");
+    draw_set_halign(fa_right);
+    if (global.Murray_AI > 0) {
+        draw_set_color(make_color_rgb(0, 130, 0));
+        draw_text(card_x + card_w - 8, card_y + 6, "[ ACTIVE - AI " + string(global.Murray_AI) + " ]");
+    } else {
+        draw_set_color(make_color_rgb(120, 120, 120));
+        draw_text(card_x + card_w - 8, card_y + 6, "[ INACTIVE - AI 0 ]");
+    }
+    draw_set_halign(fa_left);
+    draw_set_color(make_color_rgb(60, 60, 60));
+    draw_text(card_x + 8, card_y + 22, "Location: Back Left Office Window");
+    draw_set_color(c_black);
+    draw_text_ext(card_x + 8, card_y + 38, "Acecha en la ventana trasera izquierda. Cuando aparezca su cara en el cristal, bajale la persiana o haz clic sobre el para arrancarle las gafas de sol. Alumbralo con la persiana abierta para ahuyentarlo.", 13, card_w - 16);
+    draw_set_color(make_color_rgb(170, 20, 20));
+    draw_text(card_x + 8, card_y + 118, "Immune to flashlight until sunglasses are removed.");
+    var qb_x = [btn_m1_x, btn_p1_x, btn_0_x, btn_20_x];
+    var qb_txt = ["-1", "+1", "0", "20"];
+    for (var bi = 0; bi < 4; bi++) {
+        var bx = qb_x[bi];
+        var by = btn_ai_y;
+        var bw = btn_ai_w;
+        var bh = btn_ai_h;
+        var hov = (mouse_x >= bx && mouse_x <= bx + bw && mouse_y >= by && mouse_y <= by + bh);
+        draw_set_color(hov ? make_color_rgb(230, 230, 230) : make_color_rgb(210, 210, 210));
+        draw_rectangle(bx, by, bx + bw, by + bh, false);
+        draw_set_color((hov && mouse_check_button(mb_left)) ? make_color_rgb(80, 80, 80) : c_white);
+        draw_line(bx, by, bx + bw, by);
+        draw_line(bx, by, bx, by + bh);
+        draw_set_color((hov && mouse_check_button(mb_left)) ? c_white : make_color_rgb(80, 80, 80));
+        draw_line(bx, by + bh, bx + bw, by + bh);
+        draw_line(bx + bw, by, bx + bw, by + bh);
+        draw_set_color(c_black);
+        draw_rectangle(bx - 1, by - 1, bx + bw + 1, by + bh + 1, true);
+        draw_set_halign(fa_center);
+        draw_set_valign(fa_middle);
+        draw_text(bx + (bw / 2), by + (bh / 2), qb_txt[bi]);
+    }
+    draw_set_color(make_color_rgb(130, 130, 130));
+    draw_line(win_x + 10, win_y + 198, win_x + win_w - 10, win_y + 198);
+    draw_set_color(c_white);
+    draw_line(win_x + 10, win_y + 199, win_x + win_w - 10, win_y + 199);
+    var slot_y = win_y + 224;
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_top);
+    draw_set_color(make_color_rgb(50, 50, 50));
+    draw_text(win_x + 10, win_y + 206, "AVAILABLE SLOTS FOR FUTURE COMMUNITY MODS (RUST ENGINE):");
+    var start_sx = win_x + 16;
+    for (var s = 0; s < 7; s++) {
+        var sx = start_sx + (s * 60);
+        draw_set_color(make_color_rgb(180, 180, 180));
+        draw_rectangle(sx, slot_y, sx + 46, slot_y + 46, false);
+        draw_set_color(make_color_rgb(100, 100, 100));
+        draw_line(sx, slot_y, sx + 46, slot_y);
+        draw_line(sx, slot_y, sx, slot_y + 46);
+        draw_set_color(c_white);
+        draw_line(sx, slot_y + 46, sx + 46, slot_y + 46);
+        draw_line(sx + 46, slot_y, sx + 46, slot_y + 46);
+        draw_set_color(make_color_rgb(110, 110, 110));
+        draw_set_halign(fa_center);
+        draw_set_valign(fa_middle);
+        draw_text(sx + 23, slot_y + 23, "+");
+        draw_set_halign(fa_center);
+        draw_set_valign(fa_top);
+        draw_text(sx + 23, slot_y + 50, "Slot " + string(s + 2));
+    }
+    draw_set_color(make_color_rgb(90, 90, 90));
+    draw_set_halign(fa_left);
+    draw_set_valign(fa_bottom);
+    draw_text(win_x + 10, win_y + win_h - 6, "Ready for Rust animatronic editor integration & dynamic addons.");
+}
+]]>
+    </file>
+    <file name="gml_Object_oMurray_CustomNightTile_Step_0.gml">
+<![CDATA[
+depth = -1000;
+if (!variable_global_exists("Murray_AI")) {
+    global.Murray_AI = 0;
+}
+if (!variable_global_exists("CustomNight_Page")) {
+    global.CustomNight_Page = 0;
+}
+with (oCustomNightTile) {
+    visible = (global.CustomNight_Page == 0);
+}
+var snd_click = asset_get_index("sfxClick");
+if (snd_click == -1) snd_click = asset_get_index("snd_Button");
+var snd_btn = asset_get_index("snd_Button");
+if (mouse_check_button_pressed(mb_left)) {
+    if (global.CustomNight_Page == 0) {
+        if (mouse_x >= btn_vanilla_x && mouse_x <= btn_vanilla_x + btn_vanilla_w && mouse_y >= btn_vanilla_y && mouse_y <= btn_vanilla_y + btn_vanilla_h) {
+            global.CustomNight_Page = 1;
+            if (snd_click != -1) audio_play_sound(snd_click, 10, false);
+            with (oCustomNightTile) { visible = false; }
+        }
+    }
+    else if (global.CustomNight_Page == 1) {
+        if (mouse_x >= btn_back_x && mouse_x <= btn_back_x + btn_back_w && mouse_y >= btn_back_y && mouse_y <= btn_back_y + btn_back_h) {
+            global.CustomNight_Page = 0;
+            if (snd_click != -1) audio_play_sound(snd_click, 10, false);
+            with (oCustomNightTile) { visible = true; }
+        }
+        if (mouse_x >= tile_x && mouse_x <= tile_x + 48 && mouse_y >= tile_y && mouse_y <= tile_y + 66) {
+            if (mouse_x < tile_x + 24) {
+                if (global.Murray_AI > 0) {
+                    global.Murray_AI--;
+                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
+                }
+            } else {
+                if (global.Murray_AI < 20) {
+                    global.Murray_AI++;
+                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
+                }
+            }
+        }
+        if (mouse_y >= btn_ai_y && mouse_y <= btn_ai_y + btn_ai_h) {
+            if (mouse_x >= btn_m1_x && mouse_x <= btn_m1_x + btn_ai_w) {
+                if (global.Murray_AI > 0) {
+                    global.Murray_AI--;
+                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
+                }
+            } else if (mouse_x >= btn_p1_x && mouse_x <= btn_p1_x + btn_ai_w) {
+                if (global.Murray_AI < 20) {
+                    global.Murray_AI++;
+                    if (snd_click != -1) audio_play_sound(snd_click, 0, false);
+                }
+            } else if (mouse_x >= btn_0_x && mouse_x <= btn_0_x + btn_ai_w) {
+                global.Murray_AI = 0;
+                if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
+            } else if (mouse_x >= btn_20_x && mouse_x <= btn_20_x + btn_ai_w) {
+                global.Murray_AI = 20;
+                if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
+            }
+        }
+    }
+    if (mouse_y >= 43 && mouse_y <= 75) {
+        if (mouse_x >= 480 && mouse_x <= 543) {
+            global.Murray_AI = 0;
+        } else if (mouse_x >= 544 && mouse_x <= 608) {
+            global.Murray_AI = min(20, global.Murray_AI + 1);
+        }
+    } else if (mouse_y >= 75 && mouse_y <= 107) {
+        if (mouse_x >= 480 && mouse_x <= 543) {
+            global.Murray_AI = min(20, global.Murray_AI + 5);
+        } else if (mouse_x >= 544 && mouse_x <= 608) {
+            global.Murray_AI = 20;
+        }
+    }
+}
+if (global.CustomNight_Page == 1 && mouse_check_button_pressed(mb_right)) {
+    if (mouse_x >= tile_x && mouse_x <= tile_x + 48 && mouse_y >= tile_y && mouse_y <= tile_y + 66) {
+        if (global.Murray_AI > 0) {
+            global.Murray_AI = 0;
+        } else {
+            global.Murray_AI = 20;
+        }
+        if (snd_btn != -1) audio_play_sound(snd_btn, 0, false);
+    }
+}
+if (global.CustomNight_Page == 1) {
+    if (mouse_x >= tile_x && mouse_x <= card_x + card_w && mouse_y >= tile_y && mouse_y <= card_y + card_h) {
+        if (mouse_wheel_up()) {
+            if (global.Murray_AI < 20) {
+                global.Murray_AI++;
+                if (snd_click != -1) audio_play_sound(snd_click, 0, false);
+            }
+        } else if (mouse_wheel_down()) {
+            if (global.Murray_AI > 0) {
+                global.Murray_AI--;
+                if (snd_click != -1) audio_play_sound(snd_click, 0, false);
+            }
+        }
+    }
+}
+]]>
+    </file>
+    <file name="gml_Object_oMurray_DeathScreen_Draw_0.gml">
+<![CDATA[
+if (room == asset_get_index("GameOver")) {
+    with (oGameOver) {
+        Tip = "Murray Moose: Flashing him only works after you remove his sunglasses.";
+    }
+}
+]]>
+    </file>
+    <file name="gml_Object_oMurray_DeathScreen_Draw_64.gml">
+<![CDATA[
+
+]]>
+    </file>
+    <file name="gml_Object_oMurray_DeathScreen_Step_0.gml">
+<![CDATA[
+if (room == asset_get_index("GameOver")) {
+    with (oGameOver) {
+        Tip = "Murray Moose: Flashing him only works after you remove his sunglasses.";
+    }
+}
+]]>
+    </file>
+  </gml_scripts>
+  <addon_metadata file="extras_info.txt">
+<![CDATA[
+{
+  "FULL_NAME": "Murray Moose",
+  "DEBUT": "2025",
+  "DESCRIPTION": "Created as one of the prototype models for a new form of Advanced IA, Murray was meant to be the star of the new wave of animatronic performers made by Voltur-enterprise. Sadly Murray never got to see the light of day after being deemed too defective for... Certain reasons.\n\nHe, of course, won't accept that kind of fate! His career has yet to start, and he'll make the most out of it!\n\nJust... Don't tell him Disco music isn't really popular anymore.",
+  "DEV_NOTES": "Murray was originally created to be the face of a FNaF coop map for Minecraft! I asked my best friend to give me two random topics and he said \"Disco and Moose\" That's all i needed to create our Freddy Fazbear!\n\nAlthough that original map was never finished it serve as a base for all these charscters growth.\n\nMurray holds a special place in my heart, as I'm writing this my friend Peter Is doing His absolute best to code him as our first new character! If you're reading this, congrat us! That means we made it to the end!",
+  "VACredit": "Peter Z"
+}
+]]>
+  </addon_metadata>
+  <utmt_installer_csx name="Instalar_Murray_V18.csx">
+<![CDATA[
+using System;
+using System.IO;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using UndertaleModLib.Util;
+using UndertaleModLib.Models;
+using ImageMagick;
+EnsureDataLoaded();
+string importFolder = @"D:\Frickbears-mod\Murray_Sprites_To_Import";
+string assetsFolder = @"D:\Frickbears-mod\Murray_Assets";
+Directory.CreateDirectory(importFolder);
+string[] syncAssets = new string[] {
+    "sMurray_body.png", "sMurray_body_0.png",
+    "sMurray_head.png", "sMurray_head_0.png",
+    "sMurray_head_Scare.png", "sMurray_head_Scare_0.png",
+    "sMurray_head_Alt.png", "sMurray_head_Alt_0.png",
+    "sMurray_Glasses.png", "sMurray_Glasses_0.png",
+    "sMurray_Flash.png", "sMurray_Flash_0.png",
+    "sJumpscare_Murray_0.png", "sMurray_Jumpscare_0.png",
+    "sJumpscare_Murray_1.png", "sMurray_Jumpscare_1.png",
+    "sJumpscare_Murray_2.png", "sMurray_Jumpscare_2.png",
+    "sTile_Murray_0.png", "sTile_Murray_0.png",
+    "sTile_Murray_1.png", "sTile_Murray_1.png",
+    "sTile_Murray_2.png", "sTile_Murray_2.png"
+};
+for (int i = 0; i < syncAssets.Length; i += 2)
+{
+    string src = Path.Combine(assetsFolder, syncAssets[i]);
+    string dst = Path.Combine(importFolder, syncAssets[i + 1]);
+    if (File.Exists(src)) File.Copy(src, dst, true);
+}
+bool spritesMissing = (Data.Sprites.ByName("sMurray_body") == null || 
+                       Data.Sprites.ByName("sMurray_head") == null || 
+                       Data.Sprites.ByName("sMurray_head_Scare") == null ||
+                       Data.Sprites.ByName("sMurray_Glasses") == null ||
+                       Data.Sprites.ByName("sTile_Murray") == null);
+if (spritesMissing)
+{
+    if (Directory.Exists(importFolder))
+    {
+        Regex sprFrameRegex = new(@"^(.+?)(?:_(\d+))$", RegexOptions.Compiled);
+        string packDir = Path.Join(ExePath, "Packager");
+        Directory.CreateDirectory(packDir);
+        string outName = Path.Join(packDir, "atlas_murray.txt");
+        Packer packer = new Packer();
+        packer.Process(importFolder, "*.png", 2048, 2, false);
+        packer.SaveAtlasses(outName);
+        int lastTextPage = Data.EmbeddedTextures.Count - 1;
+        int lastTextPageItem = Data.TexturePageItems.Count - 1;
+        string prefix = Path.Join(Path.GetDirectoryName(outName), Path.GetFileNameWithoutExtension(outName));
+        int atlasCount = 0;
+        foreach (Atlas atlas in packer.Atlasses)
+        {
+            string atlasName = $"{prefix}{atlasCount:000}.png";
+            using MagickImage atlasImage = TextureWorker.ReadBGRAImageFromFile(atlasName);
+            UndertaleEmbeddedTexture texture = new();
+            texture.Name = new UndertaleString($"Texture {++lastTextPage}");
+            texture.TextureData.Image = GMImage.FromMagickImage(atlasImage).ConvertToPng();
+            Data.EmbeddedTextures.Add(texture);
+            foreach (Node n in atlas.Nodes)
+            {
+                if (n.Texture != null)
+                {
+                    UndertaleTexturePageItem texturePageItem = new();
+                    texturePageItem.Name = new UndertaleString($"PageItem {++lastTextPageItem}");
+                    texturePageItem.SourceX = (ushort)n.Bounds.X;
+                    texturePageItem.SourceY = (ushort)n.Bounds.Y;
+                    texturePageItem.SourceWidth = (ushort)n.Bounds.Width;
+                    texturePageItem.SourceHeight = (ushort)n.Bounds.Height;
+                    texturePageItem.TargetX = (ushort)n.Texture.TargetX;
+                    texturePageItem.TargetY = (ushort)n.Texture.TargetY;
+                    texturePageItem.TargetWidth = (ushort)n.Bounds.Width;
+                    texturePageItem.TargetHeight = (ushort)n.Bounds.Height;
+                    texturePageItem.BoundingWidth = (ushort)n.Texture.BoundingWidth;
+                    texturePageItem.BoundingHeight = (ushort)n.Texture.BoundingHeight;
+                    texturePageItem.TexturePage = texture;
+                    Data.TexturePageItems.Add(texturePageItem);
+                    string stripped = Path.GetFileNameWithoutExtension(n.Texture.Source);
+                    string spriteName = stripped;
+                    int frame = 0;
+                    try
+                    {
+                        var spriteParts = sprFrameRegex.Match(stripped);
+                        if (spriteParts.Success)
+                        {
+                            spriteName = spriteParts.Groups[1].Value;
+                            int.TryParse(spriteParts.Groups[2].Value, out frame);
+                        }
+                    }
+                    catch { }
+                    UndertaleSprite.TextureEntry texentry = new();
+                    texentry.Texture = texturePageItem;
+                    UndertaleSprite sprite = Data.Sprites.ByName(spriteName);
+                    if (sprite is null)
+                    {
+                        UndertaleSprite newSprite = new();
+                        newSprite.Name = Data.Strings.MakeString(spriteName);
+                        newSprite.Width = (uint)n.Texture.BoundingWidth;
+                        newSprite.Height = (uint)n.Texture.BoundingHeight;
+                        newSprite.MarginLeft = n.Texture.TargetX;
+                        newSprite.MarginRight = n.Texture.TargetX + n.Bounds.Width - 1;
+                        newSprite.MarginTop = n.Texture.TargetY;
+                        newSprite.MarginBottom = n.Texture.TargetY + n.Bounds.Height - 1;
+                        newSprite.OriginX = 0;
+                        newSprite.OriginY = 0;
+                        if (frame > 0)
+                        {
+                            for (int f = 0; f < frame; f++) newSprite.Textures.Add(null);
+                        }
+                        newSprite.Textures.Add(texentry);
+                        Data.Sprites.Add(newSprite);
+                    }
+                    else
+                    {
+                        while (frame >= sprite.Textures.Count)
+                        {
+                            sprite.Textures.Add(texentry);
+                        }
+                        sprite.Textures[frame] = texentry;
+                    }
+                }
+            }
+            atlasCount++;
+        }
+    }
+}
+UndertaleSprite sprJump = Data.Sprites.ByName("sMurray_Jumpscare");
+if (sprJump != null && sprJump.Textures.Count >= 3)
+{
+    var item0 = sprJump.Textures[0].Texture;
+    if (item0 != null)
+    {
+        item0.TargetX = 0;
+        item0.TargetY = 207;
+        item0.TargetWidth = 640;
+        item0.TargetHeight = 429;
+        item0.BoundingWidth = 640;
+        item0.BoundingHeight = 640;
+    }
+    var item1 = sprJump.Textures[1].Texture;
+    if (item1 != null)
+    {
+        item1.TargetX = 48;
+        item1.TargetY = 22;
+        item1.TargetWidth = 544;
+        item1.TargetHeight = 385;
+        item1.BoundingWidth = 640;
+        item1.BoundingHeight = 640;
+    }
+    var item2 = sprJump.Textures[2].Texture;
+    if (item2 != null)
+    {
+        item2.TargetX = 48;
+        item2.TargetY = 22;
+        item2.TargetWidth = 544;
+        item2.TargetHeight = 385;
+        item2.BoundingWidth = 640;
+        item2.BoundingHeight = 640;
+    }
+}
+void UpdateSpriteTexture(string spriteName, string[] filePaths)
+{
+    try
+    {
+        UndertaleSprite spr = Data.Sprites.ByName(spriteName);
+        if (spr != null)
+        {
+            for (int f = 0; f < spr.Textures.Count && f < filePaths.Length; f++)
+            {
+                string path = filePaths[f];
+                if (File.Exists(path))
+                {
+                    using MagickImage img = TextureWorker.ReadBGRAImageFromFile(path);
+                    var item = spr.Textures[f].Texture;
+                    if (item != null)
+                    {
+                        if ((int)img.Width != item.TargetWidth || (int)img.Height != item.TargetHeight)
+                        {
+                            img.Resize((uint)item.TargetWidth, (uint)item.TargetHeight);
+                        }
+                        MainThreadAction(() => { item.ReplaceTexture(img); });
+                    }
+                }
+            }
+        }
+    }
+    catch (Exception)
+    {
+    }
+}
+UpdateSpriteTexture("sMurray_body", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_body_0.png"
+});
+UpdateSpriteTexture("sMurray_head", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_head_0.png"
+});
+UpdateSpriteTexture("sMurray_head_Scare", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_head_Scare_0.png"
+});
+UpdateSpriteTexture("sMurray_Glasses", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_Glasses_0.png"
+});
+UpdateSpriteTexture("sMurray_Flash", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_Flash_0.png"
+});
+UpdateSpriteTexture("sMurray_head_Alt", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_head_Alt_0.png"
+});
+UpdateSpriteTexture("sMurray_Jumpscare", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_Jumpscare_0.png",
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_Jumpscare_1.png",
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sMurray_Jumpscare_2.png"
+});
+UpdateSpriteTexture("sTile_Murray", new string[] {
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sTile_Murray_0.png",
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sTile_Murray_1.png",
+    @"D:\Frickbears-mod\Murray_Sprites_To_Import\sTile_Murray_2.png"
+});
+UndertaleGameObject objMurray = Data.GameObjects.ByName("oMurray_BackWindow");
+if (objMurray == null)
+{
+    objMurray = new UndertaleGameObject()
+    {
+        Name = Data.Strings.MakeString("oMurray_BackWindow"),
+        Visible = true,
+        Persistent = false
+    };
+    Data.GameObjects.Add(objMurray);
+}
+UndertaleGameObject objDeath = Data.GameObjects.ByName("oMurray_DeathScreen");
+if (objDeath == null)
+{
+    objDeath = new UndertaleGameObject()
+    {
+        Name = Data.Strings.MakeString("oMurray_DeathScreen"),
+        Visible = true,
+        Persistent = true
+    };
+    Data.GameObjects.Add(objDeath);
+}
+UndertaleGameObject objCNTile = Data.GameObjects.ByName("oMurray_CustomNightTile");
+if (objCNTile == null)
+{
+    objCNTile = new UndertaleGameObject()
+    {
+        Name = Data.Strings.MakeString("oMurray_CustomNightTile"),
+        Visible = true,
+        Persistent = false
+    };
+    Data.GameObjects.Add(objCNTile);
+}
+UndertaleModLib.Compiler.CodeImportGroup importGroup = new(Data)
+{
+    AutoCreateAssets = true,
+    MainThreadAction = MainThreadAction
+};
+string codeDir = @"D:\Frickbears-mod\Murray_GML_Code\";
+importGroup.QueueReplace(objMurray.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_BackWindow_Create_0.gml")));
+importGroup.QueueReplace(objMurray.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_BackWindow_Step_0.gml")));
+importGroup.QueueReplace(objMurray.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_BackWindow_Draw_0.gml")));
+importGroup.QueueReplace(objMurray.EventHandlerFor(EventType.Draw, EventSubtypeDraw.DrawGUI, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_BackWindow_Draw_64.gml")));
+importGroup.QueueReplace(objMurray.EventHandlerFor(EventType.CleanUp, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_BackWindow_CleanUp_0.gml")));
+importGroup.QueueReplace(objDeath.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_DeathScreen_Draw_0.gml")));
+importGroup.QueueReplace(objCNTile.EventHandlerFor(EventType.Create, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_CustomNightTile_Create_0.gml")));
+importGroup.QueueReplace(objCNTile.EventHandlerFor(EventType.Step, EventSubtypeStep.Step, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_CustomNightTile_Step_0.gml")));
+importGroup.QueueReplace(objCNTile.EventHandlerFor(EventType.Draw, EventSubtypeDraw.Draw, Data), File.ReadAllText(Path.Combine(codeDir, "gml_Object_oMurray_CustomNightTile_Draw_0.gml")));
+void AddInstanceToRoom(string roomName, UndertaleGameObject targetObj, int targetX, int targetY)
+{
+    UndertaleRoom rm = Data.Rooms.ByName(roomName);
+    if (rm != null)
+    {
+        UndertaleRoom.Layer targetLayer = null;
+        foreach (var l in rm.Layers)
+        {
+            if (l.LayerType == UndertaleRoom.LayerType.Instances && l.InstancesData != null)
+            {
+                targetLayer = l;
+                break;
+            }
+        }
+        if (targetLayer != null)
+        {
+            bool alreadyThere = false;
+            foreach (var inst in targetLayer.InstancesData.Instances)
+            {
+                if (inst.ObjectDefinition == targetObj)
+                {
+                    alreadyThere = true;
+                    break;
+                }
+            }
+            if (!alreadyThere)
+            {
+                var newInst = new UndertaleRoom.GameObject()
+                {
+                    InstanceID = Data.GeneralInfo.LastObj++,
+                    ObjectDefinition = targetObj,
+                    X = targetX,
+                    Y = targetY,
+                    ScaleX = 1,
+                    ScaleY = 1,
+                    Color = 0xFFFFFFFF
+                };
+                targetLayer.InstancesData.Instances.Add(newInst);
+            }
+        }
+        bool inGameObjects = false;
+        foreach (var go in rm.GameObjects)
+        {
+            if (go.ObjectDefinition == targetObj)
+            {
+                inGameObjects = true;
+                break;
+            }
+        }
+        if (!inGameObjects)
+        {
+            rm.GameObjects.Add(new UndertaleRoom.GameObject()
+            {
+                InstanceID = Data.GeneralInfo.LastObj++,
+                ObjectDefinition = targetObj,
+                X = targetX,
+                Y = targetY,
+                ScaleX = 1,
+                ScaleY = 1,
+                Color = 0xFFFFFFFF
+            });
+        }
+    }
+}
+AddInstanceToRoom("Office", objMurray, 0, 0);
+AddInstanceToRoom("Fredbear_Office", objMurray, 0, 0);
+AddInstanceToRoom("CustomNightMenu", objCNTile, 0, 0);
+AddInstanceToRoom("EndlessShopSelection_FinalNight", objCNTile, 0, 0);
+var goCreate = Data.Code.ByName("gml_Object_oGameOver_Create_0");
+if (goCreate != null)
+{
+    try
+    {
+        string decomp = new Underanalyzer.Decompiler.DecompileContext(new UndertaleModLib.Decompiler.GlobalDecompileContext(Data), goCreate, Data.ToolInfo.DecompilerSettings).DecompileToString();
+        if (!decomp.Contains("Murray Moose"))
+        {
+            string target = "Tip = \"You passed out.\";";
+            string rep = @"if (variable_global_exists(""MurrayDeath"") && global.MurrayDeath)
+{
+    Tip = ""Murray Moose: Flashing him only works after you remove his sunglasses."";
+}
+else
+{
+    Tip = ""You passed out."";
+}";
+            if (decomp.Contains(target))
+            {
+                string patched = decomp.Replace(target, rep);
+                importGroup.QueueReplace(goCreate, patched);
+            }
+        }
+    }
+    catch { }
+}
+var goDraw = Data.Code.ByName("gml_Object_oGameOver_Draw_0");
+if (goDraw != null)
+{
+    try
+    {
+        string decomp = new Underanalyzer.Decompiler.DecompileContext(new UndertaleModLib.Decompiler.GlobalDecompileContext(Data), goDraw, Data.ToolInfo.DecompilerSettings).DecompileToString();
+        if (!decomp.Contains("MurrayDeath"))
+        {
+            string target = "if (global.Jumpscare == -1)";
+            string rep = @"if (variable_global_exists(""MurrayDeath"") && global.MurrayDeath)
+{
+    var spr_alt = asset_get_index(""sMurray_head_Alt"");
+    if (spr_alt == -1) spr_alt = asset_get_index(""sMurray_head"");
+    if (spr_alt != -1)
+    {
+        var scale = 3.2;
+        var spr_w = sprite_get_width(spr_alt) * scale;
+        var spr_h = sprite_get_height(spr_alt) * scale;
+        var hx = (640 - spr_w) / 2;
+        var hy = ((360 - spr_h) / 2) - 10;
+        draw_sprite_ext(spr_alt, 0, hx, hy, scale, scale, 0, make_color_rgb(175, 20, 20), 0.9);
+    }
+}
+else if (global.Jumpscare == -1)";
+            if (decomp.Contains(target))
+            {
+                string patched = decomp.Replace(target, rep);
+                importGroup.QueueReplace(goDraw, patched);
+            }
+        }
+    }
+    catch { }
+}
+importGroup.Import();
+try
+{
+    string gameDir = @"C:\Juegos\frickbears3-4ld-v2.0.2";
+    try
+    {
+        if (!string.IsNullOrEmpty(FilePath))
+        {
+            string dir = Path.GetDirectoryName(FilePath);
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                gameDir = dir;
+            }
+        }
+    }
+    catch { }
+    string dstAddons = Path.Combine(gameDir, "addons", "Murray");
+    Directory.CreateDirectory(dstAddons);
+    string srcAddons = @"D:\Frickbears-mod\addons\Murray";
+    if (Directory.Exists(srcAddons))
+    {
+        if (File.Exists(Path.Combine(srcAddons, "extras_info.txt")))
+            File.Copy(Path.Combine(srcAddons, "extras_info.txt"), Path.Combine(dstAddons, "extras_info.txt"), true);
+        if (File.Exists(Path.Combine(srcAddons, "portrait.png")))
+            File.Copy(Path.Combine(srcAddons, "portrait.png"), Path.Combine(dstAddons, "portrait.png"), true);
+    }
+    string badRender = Path.Combine(dstAddons, "FB_Murray_Moose.png");
+    if (File.Exists(badRender)) { try { File.Delete(badRender); } catch { } }
+    string badIcon = Path.Combine(dstAddons, "icon.png");
+    if (File.Exists(badIcon)) { try { File.Delete(badIcon); } catch { } }
+    string dstSkins = Path.Combine(gameDir, "skins", "Murray");
+    if (Directory.Exists(dstSkins)) { try { Directory.Delete(dstSkins, true); } catch { } }
+}
+catch (Exception)
+{
+}
+ScriptMessage("¡MURRAY MOOSE V18 INSTALADO CON ÉXITO!\n\n" +
+              "SOLUCIONES IMPLEMENTADAS EN V18:\n\n" +
+              "1. MOD GALLERY 100% OPERATIVA:\n" +
+              "   - Murray aparece en Mod Gallery con su bio y portrait (500x500) sin crasheos.\n\n" +
+              "2. CLICS TOTALMENTE FUNCIONALES EN LA VENTANA DE MODS:\n" +
+              "   - Hitbox amplio en el tile y flechas (< >).\n" +
+              "   - Soporte para rueda del ratón (Mouse Wheel) y clic derecho (0 / 20).\n" +
+              "   - 4 nuevos botones táctiles rápidos en la tarjeta: [-1] [+1] [0] [20].\n\n" +
+              "3. CAPA Y POSICIONAMIENTO PERFECTO (depth = -1000):\n" +
+              "   - El fondo opaco bloquea 100% las descripciones y tiles de Circus Baby o vanilla.\n" +
+              "   - El botón [MODDED (1) >] se movió a la esquina inferior derecha de la parrilla (área vacía)\n" +
+              "     para que NUNCA interfiera ni se desplace con los trucos del panel derecho.\n" +
+              "   - Botón [< VANILLA ROSTER] integrado directamente en la barra de título de la ventana.\n\n" +
+              "¡Presiona Ctrl+S en UndertaleModTool para guardar data.win!");
+public class TextureInfo
+{
+    public string Source;
+    public int Width;
+    public int Height;
+    public int TargetX;
+    public int TargetY;
+    public int BoundingWidth;
+    public int BoundingHeight;
+    public MagickImage Image;
+}
+public enum SpriteType
+{
+    Sprite,
+    Background,
+    Font,
+    Unknown
+}
+public enum SplitType
+{
+    Horizontal,
+    Vertical,
+}
+public enum BestFitHeuristic
+{
+    Area,
+    MaxOneAxis,
+}
+public struct Rect
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+}
+public class Node
+{
+    public Rect Bounds;
+    public TextureInfo Texture;
+    public SplitType SplitType;
+}
+public class Atlas
+{
+    public int Width;
+    public int Height;
+    public List<Node> Nodes;
+}
+public class Packer
+{
+    public List<TextureInfo> SourceTextures;
+    public StringWriter Log;
+    public StringWriter Error;
+    public int Padding;
+    public int AtlasSize;
+    public bool DebugMode;
+    public BestFitHeuristic FitHeuristic;
+    public List<Atlas> Atlasses;
+    public Packer()
+    {
+        SourceTextures = new List<TextureInfo>();
+        Log = new StringWriter();
+        Error = new StringWriter();
+    }
+    public void Process(string _SourceDir, string _Pattern, int _AtlasSize, int _Padding, bool _DebugMode)
+    {
+        Padding = _Padding;
+        AtlasSize = _AtlasSize;
+        DebugMode = _DebugMode;
+        ScanForTextures(_SourceDir, _Pattern);
+        List<TextureInfo> textures = new List<TextureInfo>();
+        textures = SourceTextures.ToList();
+        Atlasses = new List<Atlas>();
+        while (textures.Count > 0)
+        {
+            Atlas atlas = new Atlas();
+            atlas.Width = _AtlasSize;
+            atlas.Height = _AtlasSize;
+            List<TextureInfo> leftovers = LayoutAtlas(textures, atlas);
+            if (leftovers.Count == 0)
+            {
+                while (leftovers.Count == 0)
+                {
+                    atlas.Width /= 2;
+                    atlas.Height /= 2;
+                    leftovers = LayoutAtlas(textures, atlas);
+                }
+                atlas.Width = (atlas.Width == 0) ? 1 : atlas.Width * 2;
+                atlas.Height = (atlas.Height == 0) ? 1 : atlas.Height * 2;
+                leftovers = LayoutAtlas(textures, atlas);
+            }
+            Atlasses.Add(atlas);
+            textures = leftovers;
+        }
+    }
+    public void SaveAtlasses(string _Destination)
+    {
+        int atlasCount = 0;
+        string prefix = Path.Join(Path.GetDirectoryName(_Destination), Path.GetFileNameWithoutExtension(_Destination));
+        StreamWriter tw = new StreamWriter(_Destination);
+        tw.WriteLine("source_tex, atlas_tex, x, y, width, height");
+        foreach (Atlas atlas in Atlasses)
+        {
+            string atlasName = $"{prefix}{atlasCount:000}.png";
+            using (MagickImage img = CreateAtlasImage(atlas))
+            {
+                TextureWorker.SaveImageToFile(img, atlasName);
+            }
+            foreach (Node n in atlas.Nodes)
+            {
+                if (n.Texture != null)
+                {
+                    tw.WriteLine($"{n.Texture.Source}, {atlasName}, {n.Bounds.X}, {n.Bounds.Y}, {n.Bounds.Width}, {n.Bounds.Height}");
+                }
+            }
+            atlasCount++;
+        }
+        tw.Close();
+    }
+    private void ScanForTextures(string _Path, string _Wildcard)
+    {
+        DirectoryInfo di = new(_Path);
+        FileInfo[] files = di.GetFiles(_Wildcard, SearchOption.AllDirectories);
+        foreach (FileInfo fi in files)
+        {
+            (int width, int height) = TextureWorker.GetImageSizeFromFile(fi.FullName);
+            if (width == -1 || height == -1) continue;
+            if (width <= AtlasSize && height <= AtlasSize)
+            {
+                TextureInfo ti = new();
+                MagickImage img = new(fi.FullName);
+                ti.Source = fi.FullName;
+                ti.BoundingWidth = (int)img.Width;
+                ti.BoundingHeight = (int)img.Height;
+                ti.TargetX = 0;
+                ti.TargetY = 0;
+                img.BorderColor = MagickColors.Transparent;
+                img.BackgroundColor = MagickColors.Transparent;
+                img.Border(1);
+                IMagickGeometry? bbox = img.BoundingBox;
+                if (bbox is not null)
+                {
+                    ti.TargetX = bbox.X - 1;
+                    ti.TargetY = bbox.Y - 1;
+                    img.Trim();
+                }
+                else
+                {
+                    ti.TargetX = 0;
+                    ti.TargetY = 0;
+                    img.Crop(1, 1);
+                }
+                img.ResetPage();
+                ti.Width = (int)img.Width;
+                ti.Height = (int)img.Height;
+                ti.Image = img;
+                SourceTextures.Add(ti);
+            }
+        }
+    }
+    private void HorizontalSplit(Node _ToSplit, int _Width, int _Height, List<Node> _List)
+    {
+        Node n1 = new Node();
+        n1.Bounds.X = _ToSplit.Bounds.X + _Width + Padding;
+        n1.Bounds.Y = _ToSplit.Bounds.Y;
+        n1.Bounds.Width = _ToSplit.Bounds.Width - _Width - Padding;
+        n1.Bounds.Height = _Height;
+        n1.SplitType = SplitType.Vertical;
+        Node n2 = new Node();
+        n2.Bounds.X = _ToSplit.Bounds.X;
+        n2.Bounds.Y = _ToSplit.Bounds.Y + _Height + Padding;
+        n2.Bounds.Width = _ToSplit.Bounds.Width;
+        n2.Bounds.Height = _ToSplit.Bounds.Height - _Height - Padding;
+        n2.SplitType = SplitType.Horizontal;
+        if (n1.Bounds.Width > 0 && n1.Bounds.Height > 0) _List.Add(n1);
+        if (n2.Bounds.Width > 0 && n2.Bounds.Height > 0) _List.Add(n2);
+    }
+    private void VerticalSplit(Node _ToSplit, int _Width, int _Height, List<Node> _List)
+    {
+        Node n1 = new Node();
+        n1.Bounds.X = _ToSplit.Bounds.X + _Width + Padding;
+        n1.Bounds.Y = _ToSplit.Bounds.Y;
+        n1.Bounds.Width = _ToSplit.Bounds.Width - _Width - Padding;
+        n1.Bounds.Height = _ToSplit.Bounds.Height;
+        n1.SplitType = SplitType.Vertical;
+        Node n2 = new Node();
+        n2.Bounds.X = _ToSplit.Bounds.X;
+        n2.Bounds.Y = _ToSplit.Bounds.Y + _Height + Padding;
+        n2.Bounds.Width = _Width;
+        n2.Bounds.Height = _ToSplit.Bounds.Height - _Height - Padding;
+        n2.SplitType = SplitType.Horizontal;
+        if (n1.Bounds.Width > 0 && n1.Bounds.Height > 0) _List.Add(n1);
+        if (n2.Bounds.Width > 0 && n2.Bounds.Height > 0) _List.Add(n2);
+    }
+    private TextureInfo FindBestFitForNode(Node _Node, List<TextureInfo> _Textures)
+    {
+        TextureInfo bestFit = null;
+        float nodeArea = _Node.Bounds.Width * _Node.Bounds.Height;
+        float maxCriteria = 0.0f;
+        foreach (TextureInfo ti in _Textures)
+        {
+            if (ti.Width <= _Node.Bounds.Width && ti.Height <= _Node.Bounds.Height)
+            {
+                float textureArea = ti.Width * ti.Height;
+                float coverage = textureArea / nodeArea;
+                if (coverage > maxCriteria)
+                {
+                    maxCriteria = coverage;
+                    bestFit = ti;
+                }
+            }
+        }
+        return bestFit;
+    }
+    private List<TextureInfo> LayoutAtlas(List<TextureInfo> _Textures, Atlas _Atlas)
+    {
+        List<Node> freeList = new List<Node>();
+        List<TextureInfo> textures = new List<TextureInfo>();
+        _Atlas.Nodes = new List<Node>();
+        textures = _Textures.ToList();
+        Node root = new Node();
+        root.Bounds.Width = _Atlas.Width;
+        root.Bounds.Height = _Atlas.Height;
+        root.SplitType = SplitType.Horizontal;
+        freeList.Add(root);
+        while (freeList.Count > 0 && textures.Count > 0)
+        {
+            Node node = freeList[0];
+            freeList.RemoveAt(0);
+            TextureInfo bestFit = FindBestFitForNode(node, textures);
+            if (bestFit != null)
+            {
+                if (node.SplitType == SplitType.Horizontal)
+                    HorizontalSplit(node, bestFit.Width, bestFit.Height, freeList);
+                else
+                    VerticalSplit(node, bestFit.Width, bestFit.Height, freeList);
+                node.Texture = bestFit;
+                node.Bounds.Width = bestFit.Width;
+                node.Bounds.Height = bestFit.Height;
+                textures.Remove(bestFit);
+            }
+            _Atlas.Nodes.Add(node);
+        }
+        return textures;
+    }
+    private MagickImage CreateAtlasImage(Atlas _Atlas)
+    {
+        MagickImage img = new(MagickColors.Transparent, (uint)_Atlas.Width, (uint)_Atlas.Height);
+        foreach (Node n in _Atlas.Nodes)
+        {
+            if (n.Texture is not null)
+            {
+                MagickImage sourceImg = n.Texture.Image;
+                using IMagickImage<byte> resizedSourceImg = TextureWorker.ResizeImage(sourceImg, n.Bounds.Width, n.Bounds.Height);
+                img.Composite(resizedSourceImg, n.Bounds.X, n.Bounds.Y, CompositeOperator.Copy);
+            }
+        }
+        return img;
+    }
+}
+]]>
+  </utmt_installer_csx>
+</frickbears_mod>
