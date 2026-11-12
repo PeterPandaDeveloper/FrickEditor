@@ -388,6 +388,25 @@ impl eframe::App for FrickEditorApp {
                     self.handle_one_click_play();
                 }
 
+                ui.add_space(6.0);
+                if ui.button(RichText::new(format!("{} Iniciar Frickbears 3.exe", ic::GAME_CONTROLLER)).size(13.0)).clicked() {
+                    if let Some(game_exe) = GameLauncher::find_game_executable(&self.project.game_dir) {
+                        match GameLauncher::launch_game(&game_exe) {
+                            Ok(_) => {
+                                self.status_message = format!("Juego iniciado: {}", game_exe.file_name().unwrap_or_default().to_string_lossy());
+                                self.status_is_error = false;
+                            }
+                            Err(e) => {
+                                self.status_message = format!("Error iniciando juego: {}", e);
+                                self.status_is_error = true;
+                            }
+                        }
+                    } else {
+                        self.status_message = "No se encontró el ejecutable del juego en game_dir.".to_string();
+                        self.status_is_error = true;
+                    }
+                }
+
                 ui.add_space(10.0);
                 let btn = egui::Button::new(
                     RichText::new(format!("{}  Exportar Todo (Galería, Sprites 640x640 y GML)", ic::ROCKET_LAUNCH))

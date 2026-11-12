@@ -337,6 +337,9 @@ pub fn create_default_murray_graph() -> (FrickGraph, FrickEditorState) {
         state.graph.add_connection(out_param, in_param, 0);
     }
 
+    // Sincronizar node_order para evitar el panic de egui_node_graph2
+    state.node_order = state.graph.iter_nodes().collect();
+
     let graph = state.graph.clone();
     (graph, state)
 }

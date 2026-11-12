@@ -46,46 +46,54 @@ impl GameLauncher {
         let mut cmd = Command::new(utmt_exe_path);
 
         if exe_name.contains("cli") {
-            // Sintaxis de UndertaleModCli
+            // Sintaxis de UndertaleModCli (Modo Headless 100% silencioso)
             cmd.arg("load")
                 .arg(data_win_path)
                 .arg("-s")
                 .arg(master_csx_path)
                 .arg("-o")
                 .arg(data_win_path);
+
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+            let output = cmd
+                .spawn()
+                .map_err(|e| format!("Error al iniciar UndertaleModCli: {}", e))?
+                .wait_with_output()
+                .map_err(|e| format!("Error esperando a UndertaleModCli: {}", e))?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            if output.status.success() {
+                Ok(format!(
+                    "Inyección silenciosa completada con éxito.\n{}",
+                    stdout.trim()
+                ))
+            } else {
+                Err(format!(
+                    "UndertaleModCli falló (código {:?}):\nSTDOUT: {}\nSTDERR: {}",
+                    output.status.code(),
+                    stdout.trim(),
+                    stderr.trim()
+                ))
+            }
         } else {
-            // Sintaxis estándar de UndertaleModTool GUI / SingleFile
-            cmd.arg(data_win_path)
-                .arg("-s")
-                .arg(master_csx_path)
-                .arg("-q");
-        }
+            // UndertaleModTool GUI / SingleFile:
+            // No pasar CREATE_NO_WINDOW ni -q porque WPF revienta al ocultar ventana sin consola.
+            // Abrimos UndertaleModTool con data.win cargado y el script listo en Scripts/.
+            cmd.arg(data_win_path);
 
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
+            let _child = cmd
+                .spawn()
+                .map_err(|e| format!("Error al abrir UndertaleModTool: {}", e))?;
 
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-        let output = cmd
-            .spawn()
-            .map_err(|e| format!("Error al iniciar UndertaleModTool: {}", e))?
-            .wait_with_output()
-            .map_err(|e| format!("Error esperando a UndertaleModTool: {}", e))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if output.status.success() {
             Ok(format!(
-                "Inyección silenciosa completada con éxito.\n{}",
-                stdout.trim()
-            ))
-        } else {
-            Err(format!(
-                "UndertaleModTool falló (código {:?}):\nSTDOUT: {}\nSTDERR: {}",
-                output.status.code(),
-                stdout.trim(),
-                stderr.trim()
+                "UndertaleModTool abierto con data.win.\nScript maestro preparado en: {}\n\nEn la ventana de UTMT, haz clic en: Scripts -> master_injector.csx para compilar y guardar.",
+                master_csx_path.display()
             ))
         }
     }
@@ -203,16 +211,30 @@ impl GameLauncher {
         // 1 & 2. Construir todos los mods activos y generar `master_injector.csx`
         let master_csx_path = IdeBuilder::build_all_active_mods(active_mods, game_dir, utmt_scripts_dir, true)?;
 
-        // 3. Inyección silenciosa
-        Self::inject_silently(&utmt_exe, &data_win_path, &master_csx_path)?;
+        // 3. Inyección silenciosa o preparación en UTMT
+        let inject_result = Self::inject_silently(&utmt_exe, &data_win_path, &master_csx_path)?;
 
-        // 4. Lanzar juego
-        Self::launch_game(&game_exe)?;
+        let is_cli = utmt_exe
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("cli");
 
-        Ok(format!(
-            "¡Éxito! Inyectados {} mod(s) y juego iniciado: {}",
-            active_mods.len(),
-            game_exe.file_name().unwrap_or_default().to_string_lossy()
-        ))
+        if is_cli {
+            // Si es CLI, ya inyectó y guardó en data.win, arrancamos el juego inmediatamente
+            Self::launch_game(&game_exe)?;
+            Ok(format!(
+                "¡Éxito! Inyectados {} mod(s) y juego iniciado: {}",
+                active_mods.len(),
+                game_exe.file_name().unwrap_or_default().to_string_lossy()
+            ))
+        } else {
+            // Si es GUI, UTMT se abrió con data.win cargado
+            Ok(format!(
+                "¡Script Maestro Generado!\n{}\n(Tras ejecutarlo en UTMT, puedes abrir el juego directamente).",
+                inject_result
+            ))
+        }
     }
 }
