@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrickbearsMasterKnowledgeBase version="2.0.2" format="GMS2_VM" export_target="Rust_IDE">
+  
+  <!-- ============================================================== -->
+  <!-- 1. SALVAGE SECTIONS (Room 18: SalvageResults & Room 20: NightResults) -->
+  <!-- ============================================================== -->
+  <SalvageMechanics>
+    <GlobalVariables>
+      <Var name="global.SalvageTension" type="Real" default="0" max="100" />
+      <Var name="global.ShocksRemaining" type="Real" default="3" />
+      <Var name="global.SalvageYield" type="Real" default="500" />
+    </GlobalVariables>
+    
+    <AnimatronicProfiles>
+      <Profile id="ScrapBaby" base_tension="20" aggression_multiplier="1.5">
+        <AudioCues>
+          <Cue event="Agitation" file="salvage_move1.ogg" />
+          <Cue event="Attack" file="scrapbaby_jumpscare.ogg" />
+        </AudioCues>
+        <VisualPhases>
+          <Phase level="1" sprite="sScrapBaby_Salvage_0" description="Cabeza baja, inactiva" />
+          <Phase level="2" sprite="sScrapBaby_Salvage_1" description="Mirando al frente" />
+          <Phase level="3" sprite="sScrapBaby_Salvage_2" description="Mirada agresiva, lista para atacar" />
+        </VisualPhases>
+      </Profile>
+      <Profile id="MoltenFreddy" base_tension="35" aggression_multiplier="2.0" />
+      <Profile id="Scraptrap" base_tension="45" aggression_multiplier="1.8" />
+      <Profile id="Lefty" base_tension="50" aggression_multiplier="2.2" />
+    </AnimatronicProfiles>
+    
+    <EditorMapping>
+      <Node name="Tension Slider" maps_to="global.SalvageTension" />
+      <Node name="Shock Button" triggers="gml_Script_apply_salvage_shock" />
+      <Node name="Cassette Player" triggers="gml_Script_play_salvage_prompt" />
+    </EditorMapping>
+  </SalvageMechanics>
+
+  <!-- ============================================================== -->
+  <!-- 2. CANDY CADET & EVENTOS CINEMÁTICOS (Room 5: MidnightCutscenes) -->
+  <!-- ============================================================== -->
+  <MinigamesAndEvents>
+    <CandyCadet>
+      <Object id="100450" name="oCandyCadet" room="Office" />
+      <Interaction trigger="mouse_click" currency="PlayToken" cost="1">
+        <Outcome weight="80" type="Candy" reward="gml_Script_dispense_candy" />
+        <Outcome weight="20" type="Story" reward="gml_Script_play_cadet_story" />
+      </Interaction>
+      <Stories>
+        <Story id="1" name="Five Keys" audio="cadet_story_keys.ogg" />
+        <Story id="2" name="Five Orphans" audio="cadet_story_orphans.ogg" />
+        <Story id="3" name="Five Kittens" audio="cadet_story_kittens.ogg" />
+      </Stories>
+      <EditorMapping>
+        <Node name="Probability Slider" maps_to="Outcome Weights" />
+        <Node name="Story Audio Injection" maps_to="chunk_SOND" />
+      </EditorMapping>
+    </CandyCadet>
+
+    <MidnightCutscenes>
+      <Room index="5" name="MidnightCutscnes" />
+      <Events>
+        <Event id="Night1" target="gml_Object_oMidnightCutscene_Alarm_0" />
+        <Event id="Night2" target="gml_Object_oMidnightCutscene_Alarm_1" />
+        <Event id="Ending" target="gml_Object_oMidnightCutscene_Alarm_5" />
+      </Events>
+    </MidnightCutscenes>
+  </MinigamesAndEvents>
+
+  <!-- ============================================================== -->
+  <!-- 3. FOUR LAYERS DOWN & ENDLESS SHOP (Rooms 50, 54, 56) -->
+  <!-- ============================================================== -->
+  <FourLayersDown>
+    <Economy>
+      <Var name="global.EndlessTokens" type="Real" />
+      <Var name="global.DeathCoinsActive" type="Real" />
+    </Economy>
+    <ShopItems>
+      <Item id="PhonyBoss" cost="500" effect="Bypass Minigame Check" />
+      <Item id="FreezeTemperature" cost="200" effect="Lock temp to 60F" />
+      <Item id="JumpscareImmunity" cost="1000" effect="Block 1 fatal attack" />
+    </ShopItems>
+    <EditorMapping>
+      <Node name="Item Price" maps_to="oEndlessShop_Create_0.prices_array" />
+      <Node name="Item Icon" maps_to="sEndlessShopIcons" />
+    </EditorMapping>
+  </FourLayersDown>
+
+  <!-- ============================================================== -->
+  <!-- 4. CUSTOM NIGHT MASTER GRID (Room 10: CustomNightMenu) -->
+  <!-- ============================================================== -->
+  <CustomNightRoster>
+    <Grid width="10" height="6" cell_size="42" padding="6" offset_x="32" offset_y="12" />
+    <Slots total="60" vanilla_locked="56" modded_available="4" />
+    <Pages>
+      <Page id="0" name="Vanilla Roster" controlled_by="oCustomNightTile" />
+      <Page id="1" name="Modded Roster" controlled_by="oModPageManager" />
+    </Pages>
+  </CustomNightRoster>
+</FrickbearsMasterKnowledgeBase>
