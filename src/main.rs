@@ -43,6 +43,19 @@ enum ActiveTab {
 }
 
 #[derive(PartialEq, Clone, Copy)]
+enum GridSubView {
+    CustomNightGrid,
+    FourLayersDownSelector,
+    PauseMenuPreview,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum SalvageTabMode {
+    LiveSimulator,
+    BlueprintEditor,
+}
+
+#[derive(PartialEq, Clone, Copy)]
 enum PreviewState {
     IdleWithGlasses,
     ScaredNoGlasses,
@@ -55,6 +68,8 @@ struct FrickEditorApp {
     mod_manager: ModManager,
     active_tab: ActiveTab,
     preview_state: PreviewState,
+    grid_subview: GridSubView,
+    salvage_tab_mode: SalvageTabMode,
     sim_time: f32,
     status_message: String,
     status_is_error: bool,
@@ -67,6 +82,15 @@ struct FrickEditorApp {
     selected_code_file: usize,
     sim_blind_or_door_closed: bool,
     sim_flashlight_on: bool,
+    // Estado de Simulación de Salvamento (Room 18: SalvageResults)
+    salvage_tension: f32,
+    salvage_shocks_remaining: u8,
+    salvage_audio_playing: bool,
+    salvage_audio_timer: f32,
+    salvage_shock_flash: f32,
+    salvage_jumpscare_triggered: bool,
+    salvage_prompt_step: u8,
+    salvage_sheet_checks: [bool; 5],
 }
 
 impl FrickEditorApp {
@@ -107,6 +131,8 @@ impl FrickEditorApp {
             mod_manager,
             active_tab: ActiveTab::ModManager,
             preview_state: PreviewState::IdleWithGlasses,
+            grid_subview: GridSubView::CustomNightGrid,
+            salvage_tab_mode: SalvageTabMode::LiveSimulator,
             sim_time: 0.0,
             status_message: "FrickEditor Studio listo. Gestor de Mods y Motor Híbrido cargados.".to_string(),
             status_is_error: false,
@@ -118,6 +144,14 @@ impl FrickEditorApp {
             selected_code_file: 0,
             sim_blind_or_door_closed: false,
             sim_flashlight_on: false,
+            salvage_tension: 0.0,
+            salvage_shocks_remaining: 3,
+            salvage_audio_playing: false,
+            salvage_audio_timer: 0.0,
+            salvage_shock_flash: 0.0,
+            salvage_jumpscare_triggered: false,
+            salvage_prompt_step: 1,
+            salvage_sheet_checks: [false; 5],
         }
     }
 
@@ -202,6 +236,23 @@ impl FrickEditorApp {
 
 impl eframe::App for FrickEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let dt = ctx.input(|i| i.stable_dt);
+        self.sim_time += dt;
+        if self.salvage_audio_playing {
+            self.salvage_audio_timer -= dt;
+            self.salvage_tension = (self.salvage_tension + dt * 11.5).min(100.0);
+            if self.salvage_audio_timer <= 0.0 {
+                self.salvage_audio_playing = false;
+            }
+        }
+        if self.salvage_tension >= 100.0 && !self.salvage_jumpscare_triggered {
+            self.salvage_jumpscare_triggered = true;
+        }
+        if self.salvage_shock_flash > 0.0 {
+            self.salvage_shock_flash = (self.salvage_shock_flash - dt * 2.8).max(0.0);
+        }
+        ctx.request_repaint();
+
         // ==========================================================
         // BARRA SUPERIOR
         // ==========================================================
@@ -898,6 +949,32 @@ impl FrickEditorApp {
                 "Auto-generar Frame 1 en escala de grises (sTile_1) para AI=0 y Death Coin",
             );
 
+            cols[0].add_space(8.0);
+            if cols[0]
+                .button(
+                    RichText::new(format!("{}  Exportar Solo Ficha a Mod Gallery", ic::PACKAGE))
+                        .strong()
+                        .color(Color32::from_rgb(110, 230, 255)),
+                )
+                .clicked()
+            {
+                match IdeBuilder::export_standalone_gallery_addon(&self.project) {
+                    Ok(msg) => {
+                        self.status_is_error = false;
+                        self.status_message = msg;
+                    }
+                    Err(err) => {
+                        self.status_is_error = true;
+                        self.status_message = err;
+                    }
+                }
+            }
+            cols[0].label(
+                RichText::new("Crea/actualiza addons/<ID>/extras_info.txt, portrait.png e icon.png de forma independiente sin tocar data.win.")
+                    .size(11.0)
+                    .color(Color32::from_gray(140)),
+            );
+
             // Columna Derecha: Vista previa en vivo
             cols[1].heading(format!("{}  Previsualización de Ficha en Mod Gallery", ic::EYE));
             cols[1].add_space(6.0);
@@ -962,6 +1039,29 @@ impl FrickEditorApp {
     // PESTAÑA 2: SPRITES CON RECOMENDACIONES DE USO Y BANCO DE AUDIO
     // --------------------------------------------------------------
     fn ui_sprites_and_audio_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let verified = self.project.count_verified_assets();
+            let badge_color = if verified == 15 { Color32::from_rgb(80, 220, 120) } else { Color32::from_rgb(255, 180, 40) };
+            ui.label(RichText::new(format!("{} Checklist de Assets: {}/15 listos para montar", ic::CHECK_CIRCLE, verified)).strong().color(badge_color));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(RichText::new(format!("{}  Autocompletar Plantilla Completa (Sin Importar Nada)", ic::MAGIC_WAND)).strong().color(Color32::from_rgb(100, 240, 160))).clicked() {
+                    match IdeBuilder::generate_default_placeholders(&mut self.project) {
+                        Ok(msg) => {
+                            self.status_is_error = false;
+                            self.status_message = msg;
+                            self.tex_cache.clear();
+                        }
+                        Err(err) => {
+                            self.status_is_error = true;
+                            self.status_message = err;
+                        }
+                    }
+                }
+            });
+        });
+        ui.add_space(8.0);
+
         ui.columns(2, |cols| {
             cols[0].heading(format!("{}  Sprites de Oficina (Con Guía de Uso en Animación)", ic::STACK));
             cols[0].add_space(6.0);
@@ -1176,15 +1276,16 @@ impl FrickEditorApp {
                 let shake_x = (t * 70.0).sin() * 8.0 * cycle;
                 let shake_y = (t * 85.0).cos() * 8.0 * cycle;
                 let sz = Vec2::new(340.0 * zoom, 340.0 * zoom);
+                let anchor_pos = Pos2::new(center.x + shake_x, center.y + (20.0 * zoom) + shake_y);
 
                 if let Some(tex) = &j0_t {
-                    let r = Rect::from_center_size(Pos2::new(center.x + shake_x, center.y + 30.0 + shake_y), sz);
+                    let r = Rect::from_center_size(anchor_pos, sz);
                     painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                 }
                 let head_choice = if ((t * 15.0) as i32) % 2 == 0 { &j1_t } else { &j2_t };
                 if let Some(tex) = head_choice {
-                    let jaw_y = (t * 35.0).sin() * 6.0 * zoom;
-                    let r = Rect::from_center_size(Pos2::new(center.x + shake_x, center.y - 10.0 + shake_y + jaw_y), sz);
+                    let jaw_y = (t * 35.0).sin() * 3.5 * zoom;
+                    let r = Rect::from_center_size(Pos2::new(anchor_pos.x, anchor_pos.y + jaw_y), sz);
                     painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                 }
             }
@@ -1361,14 +1462,15 @@ impl FrickEditorApp {
                     let cycle = (t % 1.4) / 1.4;
                     let zoom = 0.55 + (cycle.powf(0.45) * 0.70);
                     let sz = Vec2::new(300.0 * zoom, 300.0 * zoom);
+                    let anchor_pos = Pos2::new(center.x, center.y + (15.0 * zoom));
                     if let Some(tex) = &j0_t {
-                        let r = Rect::from_center_size(Pos2::new(center.x, center.y + 20.0), sz);
+                        let r = Rect::from_center_size(anchor_pos, sz);
                         painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                     }
                     let head_choice = if ((t * 15.0) as i32) % 2 == 0 { &j1_t } else { &j2_t };
                     if let Some(tex) = head_choice {
-                        let jaw_y = (t * 35.0).sin() * 6.0 * zoom;
-                        let r = Rect::from_center_size(Pos2::new(center.x, center.y - 10.0 + jaw_y), sz);
+                        let jaw_y = (t * 35.0).sin() * 3.5 * zoom;
+                        let r = Rect::from_center_size(Pos2::new(anchor_pos.x, anchor_pos.y + jaw_y), sz);
                         painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                     }
                 }
@@ -1444,72 +1546,192 @@ impl FrickEditorApp {
         let icon_tex = self.project.icon_48_path.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 96));
 
         ui.columns(2, |cols| {
-            // Columna Izquierda: Selector Visual de Orden en la Página de Mods (32 Slots = 8x4)
-            cols[0].heading(format!("{}  Posición del Tile en Custom Night", ic::GRID_FOUR));
-            cols[0].label("Haz clic en cualquier casilla para elegir en qué orden aparece en la Página 2 (8x4):");
+            // Columna Izquierda: Selector de Vistas (Cuadrícula, Visor 4LD, Menú de Pausa)
+            cols[0].horizontal(|ui| {
+                ui.selectable_value(&mut self.grid_subview, GridSubView::CustomNightGrid, format!("{} Cuadrícula Mods", ic::GRID_FOUR));
+                ui.selectable_value(&mut self.grid_subview, GridSubView::FourLayersDownSelector, format!("{} Visor 4LD", ic::GAME_CONTROLLER));
+                ui.selectable_value(&mut self.grid_subview, GridSubView::PauseMenuPreview, format!("{} Menú de Pausa", ic::PAUSE));
+            });
+            cols[0].add_space(4.0);
+
+            // Banner de Rol Invariante
+            egui::Frame::group(cols[0].style())
+                .fill(Color32::from_rgb(32, 22, 22))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(220, 80, 80)))
+                .inner_margin(6.0)
+                .show(&mut cols[0], |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(ic::SHIELD_WARNING).size(16.0).color(Color32::from_rgb(255, 110, 110)));
+                        ui.label(
+                            RichText::new("ROL: ANIMATRÓNICO RIVAL / ENEMIGO (Custom Night, Endless, Salvage) — NUNCA GUARDIA")
+                                .size(11.0)
+                                .color(Color32::from_rgb(255, 190, 190))
+                                .strong(),
+                        );
+                    });
+                });
             cols[0].add_space(6.0);
 
-            egui::Frame::group(cols[0].style())
-                .fill(Color32::BLACK)
-                .stroke(Stroke::new(1.5_f32, Color32::from_gray(160)))
-                .inner_margin(8.0)
-                .show(&mut cols[0], |ui| {
-                    egui::Grid::new("custom_night_page2_grid")
-                        .spacing([6.0, 6.0])
-                        .show(ui, |ui| {
-                            for slot in 0..32 {
-                                let is_selected = self.project.custom_night.slot_index == slot;
-                                let (rect, resp) = ui.allocate_exact_size(Vec2::new(36.0, 42.0), Sense::click());
-                                if resp.clicked() {
-                                    self.project.custom_night.slot_index = slot;
-                                }
+            match self.grid_subview {
+                GridSubView::CustomNightGrid => {
+                    cols[0].heading(format!("{}  Posición del Tile en Custom Night", ic::GRID_FOUR));
+                    cols[0].label("Haz clic en cualquier casilla para elegir en qué orden aparece en la Página 2 (8x7 = 56 Slots):");
+                    cols[0].add_space(4.0);
 
-                                let p = ui.painter_at(rect);
-                                let bg = if is_selected {
-                                    Color32::from_rgb(220, 140, 30)
-                                } else if resp.hovered() {
-                                    Color32::from_rgb(65, 70, 85)
-                                } else {
-                                    Color32::from_rgb(35, 38, 45)
-                                };
-                                p.rect_filled(rect, 3.0, bg);
+                    egui::Frame::group(cols[0].style())
+                        .fill(Color32::BLACK)
+                        .stroke(Stroke::new(1.5_f32, Color32::from_gray(160)))
+                        .inner_margin(8.0)
+                        .show(&mut cols[0], |ui| {
+                            egui::Grid::new("custom_night_page2_grid")
+                                .spacing([6.0, 6.0])
+                                .show(ui, |ui| {
+                                    for slot in 0..32 {
+                                        let is_selected = self.project.custom_night.slot_index == slot;
+                                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(36.0, 42.0), Sense::click());
+                                        if resp.clicked() {
+                                            self.project.custom_night.slot_index = slot;
+                                        }
 
-                                if is_selected {
-                                    if let Some(tex) = &icon_tex {
-                                        let img_r = Rect::from_min_size(rect.min + Vec2::new(2.0, 2.0), Vec2::new(32.0, 32.0));
-                                        p.image(tex.id(), img_r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                                        let p = ui.painter_at(rect);
+                                        let bg = if is_selected {
+                                            Color32::from_rgb(220, 140, 30)
+                                        } else if resp.hovered() {
+                                            Color32::from_rgb(65, 70, 85)
+                                        } else {
+                                            Color32::from_rgb(35, 38, 45)
+                                        };
+                                        p.rect_filled(rect, 3.0, bg);
+
+                                        if is_selected {
+                                            if let Some(tex) = &icon_tex {
+                                                let img_r = Rect::from_min_size(rect.min + Vec2::new(2.0, 2.0), Vec2::new(32.0, 32.0));
+                                                p.image(tex.id(), img_r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                                            }
+                                            p.rect_stroke(rect, 3.0, Stroke::new(2.0_f32, Color32::YELLOW));
+                                        } else {
+                                            p.text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                format!("#{}", slot + 1),
+                                                egui::FontId::proportional(11.0),
+                                                Color32::from_gray(130),
+                                            );
+                                        }
+
+                                        if (slot + 1) % 8 == 0 {
+                                            ui.end_row();
+                                        }
                                     }
-                                    p.rect_stroke(rect, 3.0, Stroke::new(2.0_f32, Color32::YELLOW));
-                                } else {
-                                    p.text(
-                                        rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        format!("#{}", slot + 1),
-                                        egui::FontId::proportional(11.0),
-                                        Color32::from_gray(130),
-                                    );
-                                }
-
-                                if (slot + 1) % 8 == 0 {
-                                    ui.end_row();
-                                }
-                            }
+                                });
                         });
-                });
 
-            let (tx, ty) = self.project.custom_night.slot_to_xy();
-            cols[0].add_space(4.0);
-            cols[0].label(
-                RichText::new(format!(
-                    "{} Casilla seleccionada: Slot #{}  ->  Coordenadas GML: tile_x = {}, tile_y = {}",
-                    ic::CHECK_CIRCLE,
-                    self.project.custom_night.slot_index + 1,
-                    tx,
-                    ty
-                ))
-                .color(Color32::from_rgb(90, 215, 130))
-                .strong(),
-            );
+                    let (tx, ty) = self.project.custom_night.slot_to_xy();
+                    cols[0].add_space(4.0);
+                    cols[0].label(
+                        RichText::new(format!(
+                            "{} Casilla seleccionada: Slot #{}  ->  Coordenadas GML: tile_x = {}, tile_y = {}",
+                            ic::CHECK_CIRCLE,
+                            self.project.custom_night.slot_index + 1,
+                            tx,
+                            ty
+                        ))
+                        .color(Color32::from_rgb(90, 215, 130))
+                        .strong(),
+                    );
+                }
+                GridSubView::FourLayersDownSelector => {
+                    cols[0].heading(format!("{}  Visor de Selección (4 Layers Down / Endless)", ic::GAME_CONTROLLER));
+                    cols[0].label("Así se visualiza el animatrónico en el selector de la noche:");
+                    cols[0].add_space(4.0);
+
+                    egui::Frame::group(cols[0].style())
+                        .fill(Color32::from_rgb(16, 20, 28))
+                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(220, 160, 40)))
+                        .inner_margin(12.0)
+                        .show(&mut cols[0], |ui| {
+                            ui.horizontal(|ui| {
+                                // Tile 48x48
+                                egui::Frame::none()
+                                    .fill(Color32::BLACK)
+                                    .stroke(Stroke::new(1.5_f32, Color32::WHITE))
+                                    .inner_margin(2.0)
+                                    .show(ui, |ui| {
+                                        if let Some(tex) = &icon_tex {
+                                            ui.add(egui::Image::new(tex).fit_to_exact_size(Vec2::new(48.0, 48.0)));
+                                        } else {
+                                            ui.allocate_space(Vec2::new(48.0, 48.0));
+                                        }
+                                    });
+
+                                ui.add_space(10.0);
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(&self.project.gallery_info.full_name).size(16.0).strong().color(Color32::WHITE));
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(format!("IA en 4LD: {}", self.project.behavior.four_layers_down_ai)).color(Color32::from_rgb(255, 200, 80)).strong());
+                                        if ui.button("-").clicked() && self.project.behavior.four_layers_down_ai > 0 {
+                                            self.project.behavior.four_layers_down_ai -= 1;
+                                        }
+                                        if ui.button("+").clicked() && self.project.behavior.four_layers_down_ai < 20 {
+                                            self.project.behavior.four_layers_down_ai += 1;
+                                        }
+                                        if ui.button("20 Max").clicked() {
+                                            self.project.behavior.four_layers_down_ai = 20;
+                                        }
+                                    });
+                                    ui.label(RichText::new(format!("Debut: {}  |  Letalidad: Moderada", self.project.gallery_info.debut)).size(11.5).color(Color32::from_gray(170)));
+                                });
+                            });
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Caja de Mecánica (draw_mechanic_box al pasar el mouse):").strong().color(Color32::from_rgb(180, 200, 240)));
+                            egui::Frame::group(ui.style())
+                                .fill(Color32::from_rgb(198, 198, 198))
+                                .stroke(Stroke::new(1.5_f32, Color32::BLACK))
+                                .inner_margin(8.0)
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(&self.project.custom_night.cursor_tooltip).color(Color32::BLACK).size(12.0));
+                                });
+                        });
+                }
+                GridSubView::PauseMenuPreview => {
+                    cols[0].heading(format!("{}  Visor del Menú de Pausa (In-Game ESC)", ic::PAUSE));
+                    cols[0].label("Así se ve la ficha y descripción cuando el jugador pausa la noche:");
+                    cols[0].add_space(4.0);
+
+                    egui::Frame::group(cols[0].style())
+                        .fill(Color32::from_rgb(14, 15, 20))
+                        .stroke(Stroke::new(1.5_f32, Color32::from_gray(100)))
+                        .inner_margin(12.0)
+                        .show(&mut cols[0], |ui| {
+                            ui.label(RichText::new("GAME PAUSED — CLICK TO UNPAUSE").strong().size(14.0).color(Color32::from_rgb(255, 215, 60)));
+                            ui.add_space(6.0);
+
+                            egui::Frame::group(ui.style())
+                                .fill(Color32::from_rgb(190, 190, 190))
+                                .stroke(Stroke::new(2.0_f32, Color32::BLACK))
+                                .inner_margin(10.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if let Some(tex) = &icon_tex {
+                                            ui.add(egui::Image::new(tex).fit_to_exact_size(Vec2::new(48.0, 48.0)));
+                                        }
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new(&self.project.gallery_info.full_name).size(15.0).strong().color(Color32::BLACK));
+                                            ui.label(RichText::new(format!("Ubicación: {}", self.project.behavior.archetype.display_name())).size(11.0).color(Color32::from_rgb(40, 40, 40)));
+                                        });
+                                    });
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new(&self.project.custom_night.cursor_tooltip).color(Color32::BLACK).size(12.0));
+                                });
+
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Items & Mejoras en inventario: AR Mask, Snowcone, Taser (3), Death Coin").size(11.0).color(Color32::from_gray(160)));
+                        });
+                }
+            }
 
             // Columna Derecha: Parámetros de IA, 4 Layers Down y Textos
             cols[1].heading(format!("{}  Parámetros de IA & Textos", ic::SLIDERS_HORIZONTAL));
@@ -1711,23 +1933,27 @@ impl FrickEditorApp {
             );
             cols[0].add_space(8.0);
 
-            // Predefinidos de rutas
+            // Predefinidos de rutas de Five Nights at Frickbear's 3
             cols[0].horizontal(|ui| {
-                if ui.button(format!("{} Pasillo Oeste (1->2->6->9)", ic::FLOW_ARROW)).clicked() {
+                if ui.button(format!("{} Staff Hallway (1->2->4)", ic::FLOW_ARROW)).clicked() {
                     self.project.advanced.camera_route = vec![
-                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Show Stage".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Showroom".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
                         CameraRouteNode { camera_id: 2, camera_name: "CAM 02: Dining Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
-                        CameraRouteNode { camera_id: 6, camera_name: "CAM 06: West Hallway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
-                        CameraRouteNode { camera_id: 9, camera_name: "CAM 09: Office Doorway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 4, camera_name: "CAM 04: Staff Hallway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
                     ];
                 }
-                if ui.button(format!("{} Pasillo Este (1->2->4->5->9)", ic::FLOW_ARROW)).clicked() {
+                if ui.button(format!("{} Restroom Hallway (1->2->5)", ic::FLOW_ARROW)).clicked() {
                     self.project.advanced.camera_route = vec![
-                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Show Stage".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Showroom".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
                         CameraRouteNode { camera_id: 2, camera_name: "CAM 02: Dining Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
-                        CameraRouteNode { camera_id: 4, camera_name: "CAM 04: East Hall".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
-                        CameraRouteNode { camera_id: 5, camera_name: "CAM 05: Kitchen Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
-                        CameraRouteNode { camera_id: 9, camera_name: "CAM 09: Office Doorway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 5, camera_name: "CAM 05: Restroom Hallway".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                    ];
+                }
+                if ui.button(format!("{} Entrada Principal (1->2->6)", ic::FLOW_ARROW)).clicked() {
+                    self.project.advanced.camera_route = vec![
+                        CameraRouteNode { camera_id: 1, camera_name: "CAM 01: Showroom".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 2, camera_name: "CAM 02: Dining Area".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
+                        CameraRouteNode { camera_id: 6, camera_name: "CAM 06: Entrance".to_string(), sprite_path: None, transition_time_modifier: 1.0 },
                     ];
                 }
                 if ui.button(format!("{} Limpiar", ic::TRASH)).clicked() {
@@ -1791,7 +2017,7 @@ impl FrickEditorApp {
             cols[0].label(RichText::new("Código GML Generado en Tiempo Real:").strong());
             let cam_ids: Vec<String> = self.project.advanced.camera_route.iter().map(|n| n.camera_id.to_string()).collect();
             let mut preview_code = format!(
-                "// Array de movimiento en cámaras\n\
+                "// Array de movimiento en cámaras (Frickbear's 3)\n\
                  global.{id}_CameraRoute = [{cams}];\n\
                  global.{id}_RouteStep = 0;\n\
                  global.{id}_NextCamTimer = round(180 * {speed:.1});",
@@ -1802,7 +2028,7 @@ impl FrickEditorApp {
             cols[0].add(egui::TextEdit::multiline(&mut preview_code).desired_rows(4).desired_width(f32::INFINITY));
 
             // Columna 2: Plano Topológico Interactivo de Cámaras
-            cols[1].heading(format!("{}  Plano Topológico del Restaurante", ic::BUILDING));
+            cols[1].heading(format!("{}  Plano Topológico del Restaurante (Frickbear's 3)", ic::BUILDING));
             cols[1].label("Haz clic en cualquier cámara para añadirla o retirarla de la ruta:");
             cols[1].add_space(8.0);
 
@@ -1813,7 +2039,7 @@ impl FrickEditorApp {
             painter.rect_filled(rect, 6.0, Color32::from_rgb(18, 22, 28));
             painter.rect_stroke(rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgb(45, 55, 70)));
 
-            // Habitaciones esquemáticas
+            // Habitaciones esquemáticas oficiales de Frickbear's 3
             let draw_room = |p: &egui::Painter, r: Rect, title: &str| {
                 p.rect_filled(r, 4.0, Color32::from_rgb(24, 30, 40));
                 p.rect_stroke(r, 4.0, Stroke::new(1.0_f32, Color32::from_rgb(55, 68, 88)));
@@ -1823,26 +2049,26 @@ impl FrickEditorApp {
             let ox = rect.min.x;
             let oy = rect.min.y;
 
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 190.0, oy + 20.0), Vec2::new(160.0, 70.0)), "SHOW STAGE");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 170.0, oy + 105.0), Vec2::new(200.0, 110.0)), "DINING AREA");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 40.0), Vec2::new(130.0, 70.0)), "BACKSTAGE");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 125.0), Vec2::new(130.0, 90.0)), "PIRATE COVE");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 105.0), Vec2::new(130.0, 90.0)), "EAST HALL");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 210.0), Vec2::new(130.0, 80.0)), "KITCHEN");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 230.0), Vec2::new(130.0, 70.0)), "SUPPLY CLOSET");
-            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 200.0, oy + 270.0), Vec2::new(140.0, 75.0)), "THE OFFICE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 180.0, oy + 20.0), Vec2::new(170.0, 65.0)), "SHOWROOM");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 160.0, oy + 100.0), Vec2::new(210.0, 95.0)), "DINING AREA");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 20.0), Vec2::new(130.0, 75.0)), "PIRATE'S COVE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 115.0), Vec2::new(130.0, 85.0)), "ARCADE AREA");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 20.0, oy + 220.0), Vec2::new(130.0, 75.0)), "MAIN ENTRANCE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 20.0), Vec2::new(135.0, 75.0)), "PARTS & SERVICE");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 115.0), Vec2::new(135.0, 85.0)), "STAFF HALLWAY");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 390.0, oy + 220.0), Vec2::new(135.0, 75.0)), "RESTROOM HALLWAY");
+            draw_room(&painter, Rect::from_min_size(Pos2::new(ox + 195.0, oy + 220.0), Vec2::new(140.0, 75.0)), "SECURITY OFFICE");
 
-            // Definición de las 9 cámaras
+            // Definición de las 8 cámaras oficiales de Frickbear's 3
             let cameras = [
-                (1u8, "CAM 01", Pos2::new(ox + 270.0, oy + 65.0), "CAM 01: Show Stage"),
-                (2u8, "CAM 02", Pos2::new(ox + 270.0, oy + 160.0), "CAM 02: Dining Area"),
-                (3u8, "CAM 03", Pos2::new(ox + 85.0, oy + 175.0), "CAM 03: Pirate Cove"),
-                (4u8, "CAM 04", Pos2::new(ox + 455.0, oy + 150.0), "CAM 04: East Hall"),
-                (5u8, "CAM 05", Pos2::new(ox + 455.0, oy + 250.0), "CAM 05: Kitchen Area"),
-                (6u8, "CAM 06", Pos2::new(ox + 210.0, oy + 235.0), "CAM 06: West Hallway"),
-                (7u8, "CAM 07", Pos2::new(ox + 85.0, oy + 265.0), "CAM 07: Supply Closet"),
-                (8u8, "CAM 08", Pos2::new(ox + 85.0, oy + 75.0), "CAM 08: Backstage"),
-                (9u8, "CAM 09", Pos2::new(ox + 270.0, oy + 245.0), "CAM 09: Office Doorway"),
+                (1u8, "CAM 01", Pos2::new(ox + 265.0, oy + 58.0), "CAM 01: Showroom"),
+                (2u8, "CAM 02", Pos2::new(ox + 265.0, oy + 150.0), "CAM 02: Dining Area"),
+                (3u8, "CAM 03", Pos2::new(ox + 85.0, oy + 60.0), "CAM 03: Pirate's Cove"),
+                (4u8, "CAM 04", Pos2::new(ox + 455.0, oy + 158.0), "CAM 04: Staff Hallway"),
+                (5u8, "CAM 05", Pos2::new(ox + 455.0, oy + 258.0), "CAM 05: Restroom Hallway"),
+                (6u8, "CAM 06", Pos2::new(ox + 85.0, oy + 258.0), "CAM 06: Entrance"),
+                (7u8, "CAM 07", Pos2::new(ox + 85.0, oy + 158.0), "CAM 07: Arcade"),
+                (8u8, "CAM 08", Pos2::new(ox + 455.0, oy + 60.0), "CAM 08: Parts & Service"),
             ];
 
             // Dibujar líneas conectoras de la ruta
@@ -1858,7 +2084,7 @@ impl FrickEditorApp {
             // Si hay ruta, trazar línea final desde el último punto hacia la oficina
             if let Some(last_id) = route_cam_ids.last() {
                 if let Some(c) = cameras.iter().find(|cm| cm.0 == *last_id) {
-                    painter.line_segment([c.2, Pos2::new(ox + 270.0, oy + 305.0)], Stroke::new(2.0_f32, Color32::from_rgb(230, 60, 60)));
+                    painter.line_segment([c.2, Pos2::new(ox + 265.0, oy + 250.0)], Stroke::new(2.0_f32, Color32::from_rgb(230, 60, 60)));
                 }
             }
 
@@ -1912,249 +2138,549 @@ impl FrickEditorApp {
     // --------------------------------------------------------------
     // PESTAÑA 6: CONSTRUCTOR 3D (LABERINTOS, CONDUCTOS & MODO ENDLESS)
     // --------------------------------------------------------------
-    fn ui_environment_3d_builder_tab(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
-        ui.columns(2, |cols| {
-            // Columna Izquierda: Paleta de Objetos (Drag & Drop)
-            cols[0].heading(format!("{}  Catálogo de Entidades 3D & Props", ic::TOOLBOX));
-            cols[0].label("Haz clic para añadir objetos interactivos al laberinto (basado en Room 12-16):");
-            cols[0].add_space(8.0);
-
-            // Selector de Sala Destino
-            cols[0].horizontal(|ui| {
-                ui.label(RichText::new("Sala Destino:").strong());
-                let rooms = [
-                    "MinigameMaze_1",
-                    "MinigameMaze_2",
-                    "MinigameMaze_3",
-                    "MinigameMaze_4",
-                    "MinigameMaze_5",
-                    "Room 18: SalvageResults (Sala de Salvamento)",
-                    "Room 8: SalvageEnding (Final de Salvamento)",
-                    "MinigameMaze_Vents",
-                    "Fredbear_3DMaze",
-                ];
-                egui::ComboBox::from_label("")
-                    .selected_text(&self.project.advanced.target_maze_room)
-                    .show_ui(ui, |ui| {
-                        for rm in rooms {
-                            ui.selectable_value(&mut self.project.advanced.target_maze_room, rm.to_string(), rm);
-                        }
-                    });
-            });
-
-            cols[0].add_space(8.0);
-
-            egui::ScrollArea::vertical().id_salt("prop_palette_scroll").max_height(280.0).show(&mut cols[0], |ui| {
-                let props = [
-                    (MazePropType::AnimatronicSpawn, "Punto de Interacción / Susto (Animatronic)", ic::GHOST),
-                    (MazePropType::Hatchet, "Hacha (Interactuable en Suelo)", ic::SWORD),
-                    (MazePropType::GiftBox, "Caja de Regalo (Prop)", ic::GIFT),
-                    (MazePropType::Poster, "Póster de Pared", ic::IMAGE),
-                    (MazePropType::ArcadeCabinet, "Máquina Arcade", ic::GAME_CONTROLLER),
-                    (MazePropType::EscapeDoor, "Puerta de Escape / Salida", ic::DOOR_OPEN),
-                    (MazePropType::SalvageChair, "Silla de Salvamento / Inspección (Room 18)", ic::SHIELD),
-                    (MazePropType::SalvageCassette, "Grabadora de Cassette (Audio Prompt)", ic::SPEAKER_HIGH),
-                    (MazePropType::SalvageShock, "Taser de Electrochoque (3 usos)", ic::LIGHTNING),
-                ];
-
-                for (prop_type, desc, icon) in props.iter() {
-                    egui::Frame::group(ui.style())
-                        .fill(Color32::from_rgb(28, 31, 38))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_gray(100)))
-                        .inner_margin(8.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(*icon).size(18.0).color(Color32::from_rgb(200, 150, 50)));
-                                ui.label(RichText::new(*desc).strong());
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button(format!("{} Añadir al Mapa", ic::PLUS)).clicked() {
-                                        let offset = (self.project.advanced.maze_entities.len() * 24) as i32;
-                                        self.project.advanced.maze_entities.push(EnvironmentEntity {
-                                            prop_type: prop_type.clone(),
-                                            x: 320 + (offset % 120),
-                                            y: 180 + (offset % 80),
-                                            scale_x: 1.0,
-                                            scale_y: 1.0,
-                                        });
-                                    }
-                                });
-                            });
-                        });
-                    ui.add_space(6.0);
-                }
-            });
-
-            cols[0].add_space(6.0);
-            if self.project.advanced.target_maze_room.contains("Salvage") {
-                if cols[0].button(RichText::new(format!("{} Auto-configurar Setup Room 18", ic::LIGHTNING)).strong().color(Color32::from_rgb(255, 200, 80))).clicked() {
-                    self.project.advanced.maze_entities.clear();
-                    self.project.advanced.maze_entities.push(EnvironmentEntity {
-                        prop_type: MazePropType::SalvageChair,
-                        x: 320,
-                        y: 110,
-                        scale_x: 1.0,
-                        scale_y: 1.0,
-                    });
-                    self.project.advanced.maze_entities.push(EnvironmentEntity {
-                        prop_type: MazePropType::AnimatronicSpawn,
-                        x: 320,
-                        y: 80,
-                        scale_x: 1.0,
-                        scale_y: 1.0,
-                    });
-                    self.project.advanced.maze_entities.push(EnvironmentEntity {
-                        prop_type: MazePropType::SalvageCassette,
-                        x: 160,
-                        y: 280,
-                        scale_x: 1.0,
-                        scale_y: 1.0,
-                    });
-                    self.project.advanced.maze_entities.push(EnvironmentEntity {
-                        prop_type: MazePropType::SalvageShock,
-                        x: 480,
-                        y: 280,
-                        scale_x: 1.0,
-                        scale_y: 1.0,
-                    });
-                }
-                cols[0].add_space(4.0);
-            }
-            cols[0].horizontal(|ui| {
-                ui.label(RichText::new(format!("Entidades colocadas: {}", self.project.advanced.maze_entities.len())).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(format!("{} Limpiar Todo", ic::TRASH)).clicked() {
-                        self.project.advanced.maze_entities.clear();
-                    }
-                });
-            });
-
-            // Columna Derecha: Lienzo 2D Cenital Interactivo (Cálculo de Coordenadas In-Game)
-            cols[1].heading(format!("{}  Plano Cenital del Entorno", ic::MAP_TRIFOLD));
-            cols[1].label("Arrastra las entidades con el ratón. Clic derecho sobre una entidad para eliminarla:");
-            cols[1].add_space(8.0);
-
-            let (rect, _resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click_and_drag());
-            let painter = cols[1].painter_at(rect);
-
-            // Fondo simulando el plano técnico (Grid)
-            painter.rect_filled(rect, 4.0, Color32::from_rgb(15, 20, 25));
-            for i in 0..17 {
-                let offset_x = i as f32 * 32.0;
-                painter.line_segment(
-                    [Pos2::new(rect.min.x + offset_x, rect.min.y), Pos2::new(rect.min.x + offset_x, rect.max.y)],
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
-                );
-            }
-            for i in 0..12 {
-                let offset_y = i as f32 * 32.0;
-                painter.line_segment(
-                    [Pos2::new(rect.min.x, rect.min.y + offset_y), Pos2::new(rect.max.x, rect.min.y + offset_y)],
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
-                );
-            }
-            painter.rect_stroke(rect, 4.0, Stroke::new(2.0_f32, Color32::GRAY));
-
-            let is_salvage = self.project.advanced.target_maze_room.contains("Salvage");
-            if is_salvage {
-                // Haz de luz cenital (Spotlight de la sala de salvamento)
-                painter.circle_filled(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Color32::from_rgba_unmultiplied(255, 235, 180, 20));
-                painter.circle_stroke(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 180, 45)));
-
-                // Zona del Sujeto / Silla de Inspección
-                let chair_box = Rect::from_center_size(Pos2::new(rect.center().x, rect.min.y + 110.0), Vec2::new(140.0, 95.0));
-                painter.rect_filled(chair_box, 4.0, Color32::from_rgba_unmultiplied(70, 35, 20, 140));
-                painter.rect_stroke(chair_box, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(200, 130, 70)));
-                painter.text(Pos2::new(chair_box.center().x, chair_box.min.y + 16.0), egui::Align2::CENTER_CENTER, "ZONA SUJETO DE PRUEBA", egui::FontId::proportional(11.0), Color32::from_rgb(255, 180, 100));
-
-                // Mesa de Documentación / Taser / Cassette (Primer Plano)
-                let table_rect = Rect::from_min_max(Pos2::new(rect.min.x + 30.0, rect.min.y + 230.0), Pos2::new(rect.max.x - 30.0, rect.max.y - 15.0));
-                painter.rect_filled(table_rect, 6.0, Color32::from_rgba_unmultiplied(40, 25, 15, 220));
-                painter.rect_stroke(table_rect, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(110, 75, 45)));
-                painter.text(table_rect.center(), egui::Align2::CENTER_CENTER, "MESA DE TRABAJO (Grabadora / Taser / Hoja de Salvamento)", egui::FontId::proportional(11.0), Color32::from_rgb(190, 160, 130));
-
-                // Indicador HUD de Tensión & Shocks
-                let hud_rect = Rect::from_min_max(Pos2::new(rect.min.x + 10.0, rect.min.y + 8.0), Pos2::new(rect.max.x - 10.0, rect.min.y + 30.0));
-                painter.rect_filled(hud_rect, 3.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
-                painter.rect_stroke(hud_rect, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(100, 100, 100)));
-                painter.text(
-                    hud_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "ROOM 18: SALVAGE RESULTS — Tensión: 0% / 100% | Shocks: 3 | Valor: $500",
-                    egui::FontId::proportional(11.5),
-                    Color32::from_rgb(255, 215, 0),
-                );
-            }
-
-            let mut to_delete = None;
-            let scale_canvas_x = 540.0 / 640.0;
-
-            for (idx, entity) in self.project.advanced.maze_entities.iter_mut().enumerate() {
-                let ex = rect.min.x + (entity.x as f32 * scale_canvas_x);
-                let ey = rect.min.y + entity.y as f32;
-                let entity_rect = Rect::from_center_size(Pos2::new(ex, ey), Vec2::new(26.0, 26.0));
-
-                let icon_str = match entity.prop_type {
-                    MazePropType::AnimatronicSpawn => ic::GHOST,
-                    MazePropType::Hatchet => ic::SWORD,
-                    MazePropType::GiftBox => ic::GIFT,
-                    MazePropType::Poster => ic::IMAGE,
-                    MazePropType::ArcadeCabinet => ic::GAME_CONTROLLER,
-                    MazePropType::EscapeDoor => ic::DOOR_OPEN,
-                    MazePropType::SalvageChair => ic::SHIELD,
-                    MazePropType::SalvageCassette => ic::SPEAKER_HIGH,
-                    MazePropType::SalvageShock => ic::LIGHTNING,
-                };
-
-                let color = match entity.prop_type {
-                    MazePropType::AnimatronicSpawn => Color32::RED,
-                    MazePropType::Hatchet => Color32::LIGHT_GRAY,
-                    MazePropType::GiftBox => Color32::from_rgb(230, 180, 40),
-                    MazePropType::EscapeDoor => Color32::from_rgb(60, 200, 80),
-                    MazePropType::SalvageChair => Color32::from_rgb(180, 100, 50),
-                    MazePropType::SalvageCassette => Color32::from_rgb(70, 150, 230),
-                    MazePropType::SalvageShock => Color32::from_rgb(240, 200, 40),
-                    _ => Color32::from_rgb(100, 180, 255),
-                };
-
-                painter.rect_filled(entity_rect, 4.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190));
-                painter.rect_stroke(entity_rect, 4.0, Stroke::new(1.5_f32, Color32::WHITE));
-                painter.text(entity_rect.center(), egui::Align2::CENTER_CENTER, icon_str, egui::FontId::proportional(14.0), Color32::WHITE);
-
-                // Lógica de Drag & Drop
-                let id = egui::Id::new(format!("entity_drag_{}", idx));
-                let interact = cols[1].interact(entity_rect, id, Sense::drag());
-                if interact.dragged() {
-                    let dx = (interact.drag_delta().x / scale_canvas_x) as i32;
-                    let dy = interact.drag_delta().y as i32;
-                    entity.x = (entity.x + dx).clamp(0, 640);
-                    entity.y = (entity.y + dy).clamp(0, 360);
-                }
-                if interact.clicked_by(egui::PointerButton::Secondary) {
-                    to_delete = Some(idx);
-                }
-
-                // Tooltip de coordenadas
-                if interact.hovered() || interact.dragged() {
-                    painter.text(
-                        Pos2::new(entity_rect.center().x, entity_rect.max.y + 10.0),
-                        egui::Align2::CENTER_CENTER,
-                        format!("{}: ({}, {})", entity.prop_type.gml_object_name(), entity.x, entity.y),
-                        egui::FontId::proportional(10.5),
-                        Color32::YELLOW,
-                    );
-                }
-            }
-
-            if let Some(idx) = to_delete {
-                self.project.advanced.maze_entities.remove(idx);
-            }
-
-            cols[1].add_space(6.0);
-            cols[1].label(
-                RichText::new("Usa Clic Izquierdo para arrastrar entidades. Clic Derecho sobre una entidad para eliminarla.")
-                    .size(12.0)
-                    .color(Color32::from_gray(150)),
+    fn ui_environment_3d_builder_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        // Selector de Modo Superior: Simulador Jugable vs Plano Técnico
+        ui.horizontal(|ui| {
+            ui.selectable_value(
+                &mut self.salvage_tab_mode,
+                SalvageTabMode::LiveSimulator,
+                RichText::new(format!("{}  Simulador Jugable a 60 FPS (Room 18: Salvamento)", ic::GAME_CONTROLLER))
+                    .strong()
+                    .size(13.5)
+                    .color(Color32::from_rgb(255, 185, 60)),
+            );
+            ui.add_space(10.0);
+            ui.selectable_value(
+                &mut self.salvage_tab_mode,
+                SalvageTabMode::BlueprintEditor,
+                RichText::new(format!("{}  Plano Técnico Cenital & Entidades (Coordenadas)", ic::COMPASS))
+                    .size(13.0),
             );
         });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        if self.salvage_tab_mode == SalvageTabMode::LiveSimulator {
+            let t = self.sim_time;
+            let body_t = self.project.body_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
+            let head_t = self.project.head_normal_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
+            let scare_t = self.project.head_scare_sprite.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 320));
+            let j0_t = self.project.jumpscare_frame_0.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 420));
+            let j1_t = self.project.jumpscare_frame_1.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 420));
+            let j2_t = self.project.jumpscare_frame_2.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 420));
+
+            ui.columns(2, |cols| {
+                // COLUMNA 1: CONTROLES DE SALVAMENTO & CHECKLIST
+                cols[0].heading(format!("{}  Mesa de Salvamento (Room 18: SalvageResults)", ic::SHIELD));
+                cols[0].label("Pon a prueba al animatrónico con los prompts de audio. Si se mueve o acumula tensión, aplica una descarga eléctrica antes de que ataque.");
+                cols[0].add_space(8.0);
+
+                // Barra de Tensión
+                let tension_pct = (self.salvage_tension / 100.0).clamp(0.0, 1.0);
+                let (tension_col, tension_status) = if self.salvage_tension < 35.0 {
+                    (Color32::from_rgb(70, 215, 110), "FASE 1: Sujeto Inerte (Estable)")
+                } else if self.salvage_tension < 75.0 {
+                    (Color32::from_rgb(240, 185, 40), "FASE 2: Movimiento Detectado (Alerta)")
+                } else {
+                    (Color32::from_rgb(240, 65, 65), "FASE 3: HOSTILIDAD INMINENTE (Peligro)")
+                };
+
+                egui::Frame::group(cols[0].style())
+                    .fill(Color32::from_rgb(22, 25, 32))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 65, 80)))
+                    .rounding(Rounding::same(6.0))
+                    .inner_margin(8.0)
+                    .show(&mut cols[0], |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Nivel de Tensión:").strong());
+                            ui.label(RichText::new(format!("{:.0}%", self.salvage_tension)).strong().color(tension_col));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(tension_status).size(11.0).color(tension_col));
+                            });
+                        });
+                        ui.add_space(4.0);
+                        let bar = egui::ProgressBar::new(tension_pct)
+                            .fill(tension_col)
+                            .animate(self.salvage_audio_playing);
+                        ui.add(bar);
+                    });
+
+                cols[0].add_space(8.0);
+
+                // Botones Interactivos: Grabadora y Electrochoque
+                cols[0].horizontal(|ui| {
+                    if self.salvage_audio_playing {
+                        let audio_lbl = format!("{} Reproduciendo ({:.1}s)...", ic::SPEAKER_HIGH, self.salvage_audio_timer);
+                        ui.add_enabled(false, egui::Button::new(RichText::new(audio_lbl).color(Color32::YELLOW)));
+                    } else {
+                        let btn_txt = format!("{} Reproducir Audio Prompt #{}", ic::PLAY, (self.salvage_prompt_step % 5) + 1);
+                        let can_play = !self.salvage_jumpscare_triggered;
+                        if ui.add_enabled(can_play, egui::Button::new(RichText::new(btn_txt).strong().color(Color32::WHITE)).fill(Color32::from_rgb(40, 110, 200))).clicked() {
+                            self.salvage_audio_playing = true;
+                            self.salvage_audio_timer = 4.0;
+                            let snd = self.project.sound_knock_alert.clone();
+                            if let Some(p) = snd {
+                                self.play_audio(&p);
+                            }
+                        }
+                    }
+
+                    let taser_can_use = self.salvage_shocks_remaining > 0 && !self.salvage_jumpscare_triggered;
+                    let taser_txt = format!("{} Taser ({} usos)", ic::LIGHTNING, self.salvage_shocks_remaining);
+                    let taser_btn = egui::Button::new(RichText::new(taser_txt).strong().color(Color32::BLACK))
+                        .fill(if taser_can_use { Color32::from_rgb(255, 200, 40) } else { Color32::GRAY });
+
+                    if ui.add_enabled(taser_can_use, taser_btn).clicked() {
+                        self.salvage_shocks_remaining = self.salvage_shocks_remaining.saturating_sub(1);
+                        self.salvage_shock_flash = 1.0;
+                        self.salvage_tension = (self.salvage_tension - 45.0).max(0.0);
+                        let snd = self.project.sound_defeat.clone();
+                        if let Some(p) = snd {
+                            self.play_audio(&p);
+                        }
+                    }
+                });
+
+                cols[0].add_space(8.0);
+                cols[0].separator();
+                cols[0].add_space(4.0);
+
+                // Hoja de Documentación (Checklist)
+                cols[0].label(RichText::new(format!("{} Hoja de Documentación de Salvamento:", ic::CLIPBOARD_TEXT)).strong());
+                cols[0].add_space(4.0);
+
+                let check_labels = [
+                    "Prompt 1: Verificación de respuesta motriz",
+                    "Prompt 2: Prueba de frecuencia y modulación de audio",
+                    "Prompt 3: Estimulación de reconocimiento óptico",
+                    "Prompt 4: Test de sincronización de servomotores",
+                    "Prompt 5: Medición de hostilidad agresiva latente",
+                ];
+
+                for i in 0..5 {
+                    cols[0].horizontal(|ui| {
+                        let is_current = (self.salvage_prompt_step as usize) == i;
+                        if ui.checkbox(&mut self.salvage_sheet_checks[i], check_labels[i]).changed() {
+                            if self.salvage_sheet_checks[i] && is_current {
+                                self.salvage_prompt_step = (i + 1) as u8;
+                            }
+                        }
+                    });
+                }
+
+                cols[0].add_space(6.0);
+                let completed_count = self.salvage_sheet_checks.iter().filter(|c| **c).count();
+                if completed_count == 5 && !self.salvage_jumpscare_triggered {
+                    egui::Frame::group(cols[0].style())
+                        .fill(Color32::from_rgb(18, 45, 25))
+                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(70, 215, 110)))
+                        .inner_margin(8.0)
+                        .show(&mut cols[0], |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(ic::CHECK_CIRCLE).size(20.0).color(Color32::from_rgb(80, 230, 120)));
+                                ui.label(RichText::new("¡SALVAMENTO COMPLETADO CON ÉXITO!\nRecompensa de la noche: $500 añadidos a fondos.").strong().color(Color32::WHITE));
+                            });
+                        });
+                }
+
+                cols[0].add_space(8.0);
+                if cols[0].button(format!("{} Reiniciar Prueba de Salvamento", ic::ARROWS_CLOCKWISE)).clicked() {
+                    self.salvage_tension = 0.0;
+                    self.salvage_shocks_remaining = 3;
+                    self.salvage_audio_playing = false;
+                    self.salvage_audio_timer = 0.0;
+                    self.salvage_shock_flash = 0.0;
+                    self.salvage_jumpscare_triggered = false;
+                    self.salvage_prompt_step = 0;
+                    self.salvage_sheet_checks = [false; 5];
+                    self.stop_audio();
+                }
+
+                // COLUMNA 2: LIENZO JUGABLE A 60 FPS
+            cols[1].heading(format!("{}  Sala de Salvamento (Cámara en Primera Persona)", ic::MONITOR_PLAY));
+            cols[1].label("Perspectiva del guardia frente a la mesa de inspección:");
+            cols[1].add_space(8.0);
+
+            let (rect, resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click());
+            let painter = cols[1].painter_at(rect);
+
+            // 1. Fondo de la sala oscura
+            painter.rect_filled(rect, 6.0, Color32::from_rgb(10, 12, 16));
+
+            // 2. Luz de cono cenital (Spotlight central parpadeante)
+            let flicker = if self.salvage_audio_playing { (t * 25.0).sin() * 8.0 } else { (t * 3.0).sin() * 3.0 };
+            let spot_center = Pos2::new(rect.center().x, rect.min.y + 115.0);
+            painter.circle_filled(spot_center, 120.0 + flicker, Color32::from_rgba_unmultiplied(240, 220, 170, 18));
+            painter.circle_filled(spot_center, 75.0 + (flicker * 0.5), Color32::from_rgba_unmultiplied(255, 235, 190, 24));
+
+            // 3. Silla de salvamento detrás del sujeto
+            let chair_rect = Rect::from_center_size(Pos2::new(spot_center.x, spot_center.y + 40.0), Vec2::new(160.0, 150.0));
+            painter.rect_filled(chair_rect, 4.0, Color32::from_rgb(25, 22, 20));
+            painter.rect_stroke(chair_rect, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(50, 42, 38)));
+
+            // 4. Renderizado del Animatrónico en la Silla
+            if self.salvage_jumpscare_triggered {
+                // JUMPSCARE DE SALVAMENTO
+                let cycle = (t % 1.2) / 1.2;
+                let zoom = 0.70 + (cycle.powf(0.40) * 0.75);
+                let sz = Vec2::new(340.0 * zoom, 340.0 * zoom);
+                let j_shake_x = (t * 80.0).sin() * 8.0;
+                let j_pos = Pos2::new(rect.center().x + j_shake_x, rect.center().y + (10.0 * zoom));
+
+                if let Some(tex) = &j0_t {
+                    painter.image(tex.id(), Rect::from_center_size(j_pos, sz), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                }
+                let head_choice = if ((t * 18.0) as i32) % 2 == 0 { &j1_t } else { &j2_t };
+                if let Some(tex) = head_choice {
+                    let jaw_jitter = (t * 40.0).sin() * 4.0 * zoom;
+                    painter.image(tex.id(), Rect::from_center_size(Pos2::new(j_pos.x, j_pos.y + jaw_jitter), sz), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                }
+
+                // Marco rojo de muerte
+                painter.rect_stroke(rect, 6.0, Stroke::new(6.0_f32, Color32::from_rgb(240, 40, 40)));
+                painter.text(
+                    Pos2::new(rect.center().x, rect.min.y + 30.0),
+                    egui::Align2::CENTER_CENTER,
+                    "¡HAS SIDO ASESINADO! — EL SUJETO ATACÓ",
+                    egui::FontId::proportional(16.0),
+                    Color32::from_rgb(255, 80, 80),
+                );
+            } else {
+                // FASES VIVAS DEL ANIMATRÓNICO
+                let anim_center = Pos2::new(rect.center().x, rect.min.y + 130.0);
+
+                if self.salvage_tension < 35.0 {
+                    // Fase 1: Sujeto Inerte / Cabeza Baja
+                    let breathe = (t * 2.0).sin() * 2.5;
+                    if let Some(tex) = &body_t {
+                        let b_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y + 50.0 + breathe), Vec2::new(170.0, 125.0));
+                        painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if let Some(tex) = &head_t {
+                        let h_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y - 12.0 + (breathe * 0.7)), Vec2::new(145.0, 125.0));
+                        painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                } else if self.salvage_tension < 75.0 {
+                    // Fase 2: Alerta / Movimiento y Tics
+                    let twitch = if (t * 8.0).sin() > 0.6 { (t * 45.0).cos() * 3.5 } else { 0.0 };
+                    if let Some(tex) = &body_t {
+                        let b_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y + 45.0), Vec2::new(170.0, 125.0));
+                        painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    if let Some(tex) = &head_t {
+                        let h_rect = Rect::from_center_size(Pos2::new(anim_center.x + twitch, anim_center.y - 18.0), Vec2::new(148.0, 128.0));
+                        painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                } else {
+                    // Fase 3: Hostilidad Inminente / Temblores Fuertes & Mirada Fija
+                    let tremor_x = (t * 55.0).sin() * 4.0;
+                    let tremor_y = (t * 65.0).cos() * 3.0;
+                    if let Some(tex) = &body_t {
+                        let b_rect = Rect::from_center_size(Pos2::new(anim_center.x + tremor_x, anim_center.y + 40.0), Vec2::new(175.0, 130.0));
+                        painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+                    let host_head = scare_t.as_ref().or(j1_t.as_ref()).or(head_t.as_ref());
+                    if let Some(tex) = host_head {
+                        let h_rect = Rect::from_center_size(Pos2::new(anim_center.x + tremor_x, anim_center.y - 25.0 + tremor_y), Vec2::new(155.0, 135.0));
+                        painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    }
+
+                    // Ojos brillantes de agresión
+                    painter.circle_filled(Pos2::new(anim_center.x - 18.0 + tremor_x, anim_center.y - 30.0 + tremor_y), 3.5, Color32::from_rgb(255, 60, 40));
+                    painter.circle_filled(Pos2::new(anim_center.x + 18.0 + tremor_x, anim_center.y - 30.0 + tremor_y), 3.5, Color32::from_rgb(255, 60, 40));
+                }
+
+                // 5. Mesa de trabajo en primer plano (Foreground)
+                let table_rect = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - 75.0), rect.max);
+                painter.rect_filled(table_rect, 0.0, Color32::from_rgb(32, 22, 16));
+                painter.line_segment([table_rect.left_top(), table_rect.right_top()], Stroke::new(2.5_f32, Color32::from_rgb(60, 42, 32)));
+
+                // Grabadora en la mesa (Izquierda)
+                let cassette_box = Rect::from_center_size(Pos2::new(rect.min.x + 95.0, rect.max.y - 38.0), Vec2::new(90.0, 48.0));
+                painter.rect_filled(cassette_box, 3.0, Color32::from_rgb(45, 50, 58));
+                painter.rect_stroke(cassette_box, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(80, 85, 95)));
+                painter.text(cassette_box.center(), egui::Align2::CENTER_CENTER, format!("{} CASSETTE", ic::SPEAKER_HIGH), egui::FontId::proportional(10.5), Color32::WHITE);
+
+                // Hoja de documentación en la mesa (Centro)
+                let paper_box = Rect::from_center_size(Pos2::new(rect.center().x, rect.max.y - 35.0), Vec2::new(110.0, 52.0));
+                painter.rect_filled(paper_box, 2.0, Color32::from_rgb(220, 215, 195));
+                painter.rect_stroke(paper_box, 2.0, Stroke::new(1.0_f32, Color32::from_rgb(160, 150, 130)));
+                painter.text(paper_box.center(), egui::Align2::CENTER_CENTER, "DOCUMENTS", egui::FontId::proportional(11.0), Color32::BLACK);
+
+                // Taser en la mesa (Derecha)
+                let taser_box = Rect::from_center_size(Pos2::new(rect.max.x - 95.0, rect.max.y - 38.0), Vec2::new(85.0, 45.0));
+                let taser_col = if self.salvage_shocks_remaining > 0 { Color32::from_rgb(210, 160, 30) } else { Color32::from_rgb(55, 58, 65) };
+                painter.rect_filled(taser_box, 3.0, taser_col);
+                painter.rect_stroke(taser_box, 3.0, Stroke::new(1.0_f32, Color32::WHITE));
+                painter.text(taser_box.center(), egui::Align2::CENTER_CENTER, format!("{} SHOCK", ic::LIGHTNING), egui::FontId::proportional(11.0), Color32::BLACK);
+            }
+
+            // 6. Efecto de Flash de Electrochoque
+            if self.salvage_shock_flash > 0.0 {
+                let alpha = (self.salvage_shock_flash * 220.0).min(255.0) as u8;
+                painter.rect_filled(rect, 6.0, Color32::from_rgba_unmultiplied(210, 240, 255, alpha));
+
+                // Líneas de relámpago
+                let cx = rect.center().x;
+                let cy = rect.center().y;
+                painter.line_segment([Pos2::new(cx - 60.0, cy - 80.0), Pos2::new(cx, cy)], Stroke::new(3.0_f32, Color32::WHITE));
+                painter.line_segment([Pos2::new(cx, cy), Pos2::new(cx + 50.0, cy + 60.0)], Stroke::new(3.0_f32, Color32::WHITE));
+            }
+
+            // Clic en la pantalla para interactuar
+            if resp.clicked() && !self.salvage_jumpscare_triggered {
+                self.salvage_tension = (self.salvage_tension + 8.0).min(100.0);
+            }
+            });
+        } else {
+            // ==============================================================
+            // MODO PLANO TÉCNICO CENITAL & CATÁLOGO DE ENTIDADES 3D
+            // ==============================================================
+            ui.columns(2, |cols| {
+                // Columna Izquierda: Paleta de Objetos (Drag & Drop)
+                cols[0].heading(format!("{}  Catálogo de Entidades 3D & Props", ic::TOOLBOX));
+                cols[0].label("Haz clic para añadir objetos interactivos al laberinto (basado en Room 12-16):");
+                cols[0].add_space(8.0);
+
+                // Selector de Sala Destino
+                cols[0].horizontal(|ui| {
+                    ui.label(RichText::new("Sala Destino:").strong());
+                    let rooms = [
+                        "MinigameMaze_1",
+                        "MinigameMaze_2",
+                        "MinigameMaze_3",
+                        "MinigameMaze_4",
+                        "MinigameMaze_5",
+                        "Room 18: SalvageResults (Sala de Salvamento)",
+                        "Room 8: SalvageEnding (Final de Salvamento)",
+                        "MinigameMaze_Vents",
+                        "Fredbear_3DMaze",
+                    ];
+                    egui::ComboBox::from_label("")
+                        .selected_text(&self.project.advanced.target_maze_room)
+                        .show_ui(ui, |ui| {
+                            for rm in rooms {
+                                ui.selectable_value(&mut self.project.advanced.target_maze_room, rm.to_string(), rm);
+                            }
+                        });
+                });
+
+                cols[0].add_space(8.0);
+
+                egui::ScrollArea::vertical().id_salt("prop_palette_scroll").max_height(280.0).show(&mut cols[0], |ui| {
+                    let props = [
+                        (MazePropType::AnimatronicSpawn, "Punto de Interacción / Susto (Animatronic)", ic::GHOST),
+                        (MazePropType::Hatchet, "Hacha (Interactuable en Suelo)", ic::SWORD),
+                        (MazePropType::GiftBox, "Caja de Regalo (Prop)", ic::GIFT),
+                        (MazePropType::Poster, "Póster de Pared", ic::IMAGE),
+                        (MazePropType::ArcadeCabinet, "Máquina Arcade", ic::GAME_CONTROLLER),
+                        (MazePropType::EscapeDoor, "Puerta de Escape / Salida", ic::DOOR_OPEN),
+                        (MazePropType::SalvageChair, "Silla de Salvamento / Inspección (Room 18)", ic::SHIELD),
+                        (MazePropType::SalvageCassette, "Grabadora de Cassette (Audio Prompt)", ic::SPEAKER_HIGH),
+                        (MazePropType::SalvageShock, "Taser de Electrochoque (3 usos)", ic::LIGHTNING),
+                    ];
+
+                    for (prop_type, desc, icon) in props.iter() {
+                        egui::Frame::group(ui.style())
+                            .fill(Color32::from_rgb(28, 31, 38))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_gray(100)))
+                            .inner_margin(8.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(*icon).size(18.0).color(Color32::from_rgb(200, 150, 50)));
+                                    ui.label(RichText::new(*desc).strong());
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.button(format!("{} Añadir al Mapa", ic::PLUS)).clicked() {
+                                            let offset = (self.project.advanced.maze_entities.len() * 24) as i32;
+                                            self.project.advanced.maze_entities.push(EnvironmentEntity {
+                                                prop_type: prop_type.clone(),
+                                                x: 320 + (offset % 120),
+                                                y: 180 + (offset % 80),
+                                                scale_x: 1.0,
+                                                scale_y: 1.0,
+                                            });
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(6.0);
+                    }
+                });
+
+                cols[0].add_space(6.0);
+                if self.project.advanced.target_maze_room.contains("Salvage") {
+                    if cols[0].button(RichText::new(format!("{} Auto-configurar Setup Room 18", ic::LIGHTNING)).strong().color(Color32::from_rgb(255, 200, 80))).clicked() {
+                        self.project.advanced.maze_entities.clear();
+                        self.project.advanced.maze_entities.push(EnvironmentEntity {
+                            prop_type: MazePropType::SalvageChair,
+                            x: 320,
+                            y: 110,
+                            scale_x: 1.0,
+                            scale_y: 1.0,
+                        });
+                        self.project.advanced.maze_entities.push(EnvironmentEntity {
+                            prop_type: MazePropType::AnimatronicSpawn,
+                            x: 320,
+                            y: 80,
+                            scale_x: 1.0,
+                            scale_y: 1.0,
+                        });
+                        self.project.advanced.maze_entities.push(EnvironmentEntity {
+                            prop_type: MazePropType::SalvageCassette,
+                            x: 160,
+                            y: 280,
+                            scale_x: 1.0,
+                            scale_y: 1.0,
+                        });
+                        self.project.advanced.maze_entities.push(EnvironmentEntity {
+                            prop_type: MazePropType::SalvageShock,
+                            x: 480,
+                            y: 280,
+                            scale_x: 1.0,
+                            scale_y: 1.0,
+                        });
+                    }
+                    cols[0].add_space(4.0);
+                }
+                cols[0].horizontal(|ui| {
+                    ui.label(RichText::new(format!("Entidades colocadas: {}", self.project.advanced.maze_entities.len())).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(format!("{} Limpiar Todo", ic::TRASH)).clicked() {
+                            self.project.advanced.maze_entities.clear();
+                        }
+                    });
+                });
+
+                // Columna Derecha: Lienzo 2D Cenital Interactivo (Cálculo de Coordenadas In-Game)
+                cols[1].heading(format!("{}  Plano Cenital del Entorno", ic::MAP_TRIFOLD));
+                cols[1].label("Arrastra las entidades con el ratón. Clic derecho sobre una entidad para eliminarla:");
+                cols[1].add_space(8.0);
+
+                let (rect, _resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click_and_drag());
+                let painter = cols[1].painter_at(rect);
+
+                // Fondo simulando el plano técnico (Grid)
+                painter.rect_filled(rect, 4.0, Color32::from_rgb(15, 20, 25));
+                for i in 0..17 {
+                    let offset_x = i as f32 * 32.0;
+                    painter.line_segment(
+                        [Pos2::new(rect.min.x + offset_x, rect.min.y), Pos2::new(rect.min.x + offset_x, rect.max.y)],
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
+                    );
+                }
+                for i in 0..12 {
+                    let offset_y = i as f32 * 32.0;
+                    painter.line_segment(
+                        [Pos2::new(rect.min.x, rect.min.y + offset_y), Pos2::new(rect.max.x, rect.min.y + offset_y)],
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
+                    );
+                }
+                painter.rect_stroke(rect, 4.0, Stroke::new(2.0_f32, Color32::GRAY));
+
+                let is_salvage = self.project.advanced.target_maze_room.contains("Salvage");
+                if is_salvage {
+                    // Haz de luz cenital (Spotlight de la sala de salvamento)
+                    painter.circle_filled(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Color32::from_rgba_unmultiplied(255, 235, 180, 20));
+                    painter.circle_stroke(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 180, 45)));
+
+                    // Zona del Sujeto / Silla de Inspección
+                    let chair_box = Rect::from_center_size(Pos2::new(rect.center().x, rect.min.y + 110.0), Vec2::new(140.0, 95.0));
+                    painter.rect_filled(chair_box, 4.0, Color32::from_rgba_unmultiplied(70, 35, 20, 140));
+                    painter.rect_stroke(chair_box, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(200, 130, 70)));
+                    painter.text(Pos2::new(chair_box.center().x, chair_box.min.y + 16.0), egui::Align2::CENTER_CENTER, "ZONA SUJETO DE PRUEBA", egui::FontId::proportional(11.0), Color32::from_rgb(255, 180, 100));
+
+                    // Mesa de Documentación / Taser / Cassette (Primer Plano)
+                    let table_rect = Rect::from_min_max(Pos2::new(rect.min.x + 30.0, rect.min.y + 230.0), Pos2::new(rect.max.x - 30.0, rect.max.y - 15.0));
+                    painter.rect_filled(table_rect, 6.0, Color32::from_rgba_unmultiplied(40, 25, 15, 220));
+                    painter.rect_stroke(table_rect, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(110, 75, 45)));
+                    painter.text(table_rect.center(), egui::Align2::CENTER_CENTER, "MESA DE TRABAJO (Grabadora / Taser / Hoja de Salvamento)", egui::FontId::proportional(11.0), Color32::from_rgb(190, 160, 130));
+
+                    // Indicador HUD de Tensión & Shocks
+                    let hud_rect = Rect::from_min_max(Pos2::new(rect.min.x + 10.0, rect.min.y + 8.0), Pos2::new(rect.max.x - 10.0, rect.min.y + 30.0));
+                    painter.rect_filled(hud_rect, 3.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+                    painter.rect_stroke(hud_rect, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(100, 100, 100)));
+                    painter.text(
+                        hud_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "ROOM 18: SALVAGE RESULTS — Tensión: 0% / 100% | Shocks: 3 | Valor: $500",
+                        egui::FontId::proportional(11.5),
+                        Color32::from_rgb(255, 215, 0),
+                    );
+                }
+
+                let mut to_delete = None;
+                let scale_canvas_x = 540.0 / 640.0;
+
+                for (idx, entity) in self.project.advanced.maze_entities.iter_mut().enumerate() {
+                    let ex = rect.min.x + (entity.x as f32 * scale_canvas_x);
+                    let ey = rect.min.y + entity.y as f32;
+                    let entity_rect = Rect::from_center_size(Pos2::new(ex, ey), Vec2::new(26.0, 26.0));
+
+                    let icon_str = match entity.prop_type {
+                        MazePropType::AnimatronicSpawn => ic::GHOST,
+                        MazePropType::Hatchet => ic::SWORD,
+                        MazePropType::GiftBox => ic::GIFT,
+                        MazePropType::Poster => ic::IMAGE,
+                        MazePropType::ArcadeCabinet => ic::GAME_CONTROLLER,
+                        MazePropType::EscapeDoor => ic::DOOR_OPEN,
+                        MazePropType::SalvageChair => ic::SHIELD,
+                        MazePropType::SalvageCassette => ic::SPEAKER_HIGH,
+                        MazePropType::SalvageShock => ic::LIGHTNING,
+                    };
+
+                    let color = match entity.prop_type {
+                        MazePropType::AnimatronicSpawn => Color32::RED,
+                        MazePropType::Hatchet => Color32::LIGHT_GRAY,
+                        MazePropType::GiftBox => Color32::from_rgb(230, 180, 40),
+                        MazePropType::EscapeDoor => Color32::from_rgb(60, 200, 80),
+                        MazePropType::SalvageChair => Color32::from_rgb(180, 100, 50),
+                        MazePropType::SalvageCassette => Color32::from_rgb(70, 150, 230),
+                        MazePropType::SalvageShock => Color32::from_rgb(240, 200, 40),
+                        _ => Color32::from_rgb(100, 180, 255),
+                    };
+
+                    painter.rect_filled(entity_rect, 4.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190));
+                    painter.rect_stroke(entity_rect, 4.0, Stroke::new(1.5_f32, Color32::WHITE));
+                    painter.text(entity_rect.center(), egui::Align2::CENTER_CENTER, icon_str, egui::FontId::proportional(14.0), Color32::WHITE);
+
+                    // Lógica de Drag & Drop
+                    let id = egui::Id::new(format!("entity_drag_{}", idx));
+                    let interact = cols[1].interact(entity_rect, id, Sense::drag());
+                    if interact.dragged() {
+                        let dx = (interact.drag_delta().x / scale_canvas_x) as i32;
+                        let dy = interact.drag_delta().y as i32;
+                        entity.x = (entity.x + dx).clamp(0, 640);
+                        entity.y = (entity.y + dy).clamp(0, 360);
+                    }
+                    if interact.clicked_by(egui::PointerButton::Secondary) {
+                        to_delete = Some(idx);
+                    }
+
+                    // Tooltip de coordenadas
+                    if interact.hovered() || interact.dragged() {
+                        painter.text(
+                            Pos2::new(entity_rect.center().x, entity_rect.max.y + 10.0),
+                            egui::Align2::CENTER_CENTER,
+                            format!("{}: ({}, {})", entity.prop_type.gml_object_name(), entity.x, entity.y),
+                            egui::FontId::proportional(10.5),
+                            Color32::YELLOW,
+                        );
+                    }
+                }
+
+                if let Some(idx) = to_delete {
+                    self.project.advanced.maze_entities.remove(idx);
+                }
+
+                cols[1].add_space(6.0);
+                cols[1].label(
+                    RichText::new("Usa Clic Izquierdo para arrastrar entidades. Clic Derecho sobre una entidad para eliminarla.")
+                        .size(12.0)
+                        .color(Color32::from_gray(150)),
+                );
+            });
+        }
     }
 }

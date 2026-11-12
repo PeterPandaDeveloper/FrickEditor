@@ -1575,6 +1575,140 @@ public class Packer
         Ok(format!("Fase 1 exportada en addons/{0} y {0}_Sprites_To_Import.", id))
     }
 
+    pub fn export_standalone_gallery_addon(proj: &AnimatronicProject) -> Result<String, String> {
+        let id = proj.internal_id.trim();
+        if id.is_empty() {
+            return Err("El ID interno no puede estar vacío.".to_string());
+        }
+        let addon_dir = proj.game_dir.join("addons").join(id);
+        fs::create_dir_all(&addon_dir).map_err(|e| e.to_string())?;
+
+        let extras_json = serde_json::to_string_pretty(&proj.gallery_info).map_err(|e| e.to_string())?;
+        fs::write(addon_dir.join("extras_info.txt"), extras_json).map_err(|e| e.to_string())?;
+
+        if let Some(portrait_src) = &proj.portrait_500_path {
+            if portrait_src.exists() {
+                if let Ok(img) = image::open(portrait_src) {
+                    let _ = img.resize_exact(500, 500, imageops::FilterType::Lanczos3)
+                        .save(addon_dir.join("portrait.png"));
+                }
+            }
+        }
+        if let Some(icon_src) = &proj.icon_48_path {
+            if icon_src.exists() {
+                if let Ok(img) = image::open(icon_src) {
+                    let _ = img.resize_exact(48, 48, imageops::FilterType::Nearest)
+                        .save(addon_dir.join("icon.png"));
+                }
+            }
+        }
+        Ok(format!("Ficha de '{}' exportada de forma independiente a addons/{}/ (extras_info.txt, portrait.png, icon.png)", proj.gallery_info.full_name, id))
+    }
+
+    pub fn generate_default_placeholders(proj: &mut AnimatronicProject) -> Result<String, String> {
+        let id = proj.internal_id.trim();
+        if id.is_empty() {
+            return Err("El ID interno no puede estar vacío.".to_string());
+        }
+        let gen_dir = proj.workspace_dir.join(format!("{}_Generated_Assets", id));
+        fs::create_dir_all(&gen_dir).map_err(|e| e.to_string())?;
+
+        // Helper para crear imagen RGBA con color de relleno y borde
+        let make_rect_img = |w: u32, h: u32, fill: [u8; 4], border: [u8; 4]| -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+            let mut img = ImageBuffer::from_pixel(w, h, Rgba(fill));
+            for x in 0..w {
+                img.put_pixel(x, 0, Rgba(border));
+                img.put_pixel(x, h - 1, Rgba(border));
+            }
+            for y in 0..h {
+                img.put_pixel(0, y, Rgba(border));
+                img.put_pixel(w - 1, y, Rgba(border));
+            }
+            img
+        };
+
+        if proj.portrait_500_path.is_none() || !proj.portrait_500_path.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let p_path = gen_dir.join("portrait_500.png");
+            let img = make_rect_img(500, 500, [35, 40, 52, 255], [220, 140, 40, 255]);
+            img.save(&p_path).map_err(|e| e.to_string())?;
+            proj.portrait_500_path = Some(p_path);
+        }
+
+        if proj.icon_48_path.is_none() || !proj.icon_48_path.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let i_path = gen_dir.join("icon_48.png");
+            let img = make_rect_img(48, 48, [45, 50, 65, 255], [255, 200, 50, 255]);
+            img.save(&i_path).map_err(|e| e.to_string())?;
+            proj.icon_48_path = Some(i_path);
+        }
+
+        if proj.body_sprite.is_none() || !proj.body_sprite.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let b_path = gen_dir.join("body_office.png");
+            let img = make_rect_img(190, 140, [180, 80, 30, 255], [240, 160, 60, 255]);
+            img.save(&b_path).map_err(|e| e.to_string())?;
+            proj.body_sprite = Some(b_path);
+        }
+
+        if proj.head_normal_sprite.is_none() || !proj.head_normal_sprite.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let h_path = gen_dir.join("head_office.png");
+            let img = make_rect_img(170, 145, [200, 100, 40, 255], [255, 220, 80, 255]);
+            img.save(&h_path).map_err(|e| e.to_string())?;
+            proj.head_normal_sprite = Some(h_path);
+        }
+
+        if proj.head_scare_sprite.is_none() || !proj.head_scare_sprite.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let s_path = gen_dir.join("head_scare.png");
+            let img = make_rect_img(175, 150, [220, 50, 50, 255], [255, 255, 255, 255]);
+            img.save(&s_path).map_err(|e| e.to_string())?;
+            proj.head_scare_sprite = Some(s_path);
+        }
+
+        if proj.flash_defeat_sprite.is_none() || !proj.flash_defeat_sprite.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let f_path = gen_dir.join("flash_defeat.png");
+            let img = make_rect_img(220, 220, [80, 80, 100, 255], [160, 160, 200, 255]);
+            img.save(&f_path).map_err(|e| e.to_string())?;
+            proj.flash_defeat_sprite = Some(f_path);
+        }
+
+        if proj.accessory_sprite.is_none() || !proj.accessory_sprite.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let a_path = gen_dir.join("accessory.png");
+            let img = make_rect_img(76, 30, [40, 180, 240, 255], [255, 255, 255, 255]);
+            img.save(&a_path).map_err(|e| e.to_string())?;
+            proj.accessory_sprite = Some(a_path);
+        }
+
+        if proj.jumpscare_frame_0.is_none() || !proj.jumpscare_frame_0.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let j0_path = gen_dir.join("jumpscare_0.png");
+            let img = make_rect_img(640, 640, [160, 60, 20, 255], [255, 100, 40, 255]);
+            img.save(&j0_path).map_err(|e| e.to_string())?;
+            proj.jumpscare_frame_0 = Some(j0_path);
+        }
+
+        if proj.jumpscare_frame_1.is_none() || !proj.jumpscare_frame_1.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let j1_path = gen_dir.join("jumpscare_1.png");
+            let img = make_rect_img(640, 640, [190, 80, 30, 255], [255, 200, 50, 255]);
+            img.save(&j1_path).map_err(|e| e.to_string())?;
+            proj.jumpscare_frame_1 = Some(j1_path);
+        }
+
+        if proj.jumpscare_frame_2.is_none() || !proj.jumpscare_frame_2.as_ref().map(|p| p.exists()).unwrap_or(false) {
+            let j2_path = gen_dir.join("jumpscare_2.png");
+            let img = make_rect_img(640, 640, [220, 40, 20, 255], [255, 255, 255, 255]);
+            img.save(&j2_path).map_err(|e| e.to_string())?;
+            proj.jumpscare_frame_2 = Some(j2_path);
+        }
+
+        // Buscar audios .ogg de plantilla existentes para clonar si faltan
+        let sample_audio = proj.workspace_dir.join("murray_knock.ogg");
+        if sample_audio.exists() {
+            if proj.sound_knock_alert.is_none() { proj.sound_knock_alert = Some(sample_audio.clone()); }
+            if proj.sound_voice_line.is_none() { proj.sound_voice_line = Some(sample_audio.clone()); }
+            if proj.sound_defeat.is_none() { proj.sound_defeat = Some(sample_audio.clone()); }
+            if proj.sound_jumpscare.is_none() { proj.sound_jumpscare = Some(sample_audio.clone()); }
+        }
+
+        Ok(format!("Plantilla de assets para '{}' generada con éxito en {}_Generated_Assets/.", id, id))
+    }
+
     pub fn clean_from_game(proj: &AnimatronicProject) -> Result<String, String> {
         let id = proj.internal_id.trim();
         if id.is_empty() {
@@ -1720,19 +1854,40 @@ public class Packer
         let head1 = image::open(j1_path).map_err(|e| e.to_string())?;
         let head2 = image::open(j2_path).map_err(|e| e.to_string())?;
 
-        let configs = [
-            (0, &head1, 0i64, 0i64),
-            (1, &head2, 0i64, 10i64),
-            (2, &head2, 0i64, -6i64),
-        ];
+        let is_already_composite = {
+            let mut top_pixels = 0;
+            let rgba = body.to_rgba8();
+            for y in 0..100 {
+                for x in (0..rgba.width()).step_by(10) {
+                    if rgba.get_pixel(x, y)[3] > 50 {
+                        top_pixels += 1;
+                    }
+                }
+            }
+            top_pixels > 20
+        };
 
-        for (idx, head, dy_body, dy_head) in configs {
-            let mut canvas: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(640, 640);
-            imageops::overlay(&mut canvas, &body, 0, dy_body);
-            imageops::overlay(&mut canvas, head, 0, dy_head);
+        if is_already_composite {
+            // Ya son fotogramas completos de animación secuencial 640x640
+            body.save(import_dir.join(format!("s{}_Jumpscare_0.png", id))).map_err(|e| e.to_string())?;
+            head1.save(import_dir.join(format!("s{}_Jumpscare_1.png", id))).map_err(|e| e.to_string())?;
+            head2.save(import_dir.join(format!("s{}_Jumpscare_2.png", id))).map_err(|e| e.to_string())?;
+        } else {
+            // Son 2 capas separadas: Torso (j0) + Cabezas articuladas (j1 y j2)
+            let configs = [
+                (0, &head1, 0i64, 0i64),
+                (1, &head2, 0i64, 2i64),
+                (2, &head2, 0i64, -2i64),
+            ];
 
-            let out_name = format!("s{}_Jumpscare_{}.png", id, idx);
-            canvas.save(import_dir.join(out_name)).map_err(|e| e.to_string())?;
+            for (idx, head, dy_body, dy_head) in configs {
+                let mut canvas: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(640, 640);
+                imageops::overlay(&mut canvas, &body, 0, dy_body);
+                imageops::overlay(&mut canvas, head, 0, dy_head);
+
+                let out_name = format!("s{}_Jumpscare_{}.png", id, idx);
+                canvas.save(import_dir.join(out_name)).map_err(|e| e.to_string())?;
+            }
         }
         Ok(())
     }

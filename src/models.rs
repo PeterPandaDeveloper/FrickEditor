@@ -462,4 +462,8 @@ impl AnimatronicProject {
         }
         (ready, total)
     }
+
+    pub fn count_verified_assets(&self) -> usize {
+        self.readiness_score().0
+    }
 }
