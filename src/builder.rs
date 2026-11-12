@@ -944,16 +944,23 @@ AddInstanceToRoom("EndlessShopSelection_FinalNight", objCNTile_{id}, 0, 0);
                     let mut code = String::new();
                     if !proj.advanced.maze_entities.is_empty() {
                         let target_room = &proj.advanced.target_maze_room;
-                        code.push_str(&format!("\n// Inyección de Props 3D / Laberinto en {target_room} para {id}\n"));
+                        let clean_room = if target_room.contains("SalvageResults") {
+                            "SalvageResults"
+                        } else if target_room.contains("SalvageEnding") {
+                            "SalvageEnding"
+                        } else {
+                            target_room.as_str()
+                        };
+                        code.push_str(&format!("\n// Inyección de Props 3D / Laberinto en {clean_room} para {id}\n"));
                         for (idx, ent) in proj.advanced.maze_entities.iter().enumerate() {
                             let obj_name = ent.prop_type.gml_object_name();
                             code.push_str(&format!(
                                 "UndertaleGameObject prop_{id}_{idx} = Data.GameObjects.ByName(\"{obj_name}\");\n\
-                                 if (prop_{id}_{idx} != null) AddInstanceToRoom(\"{target_room}\", prop_{id}_{idx}, {x}, {y});\n",
+                                 if (prop_{id}_{idx} != null) AddInstanceToRoom(\"{clean_room}\", prop_{id}_{idx}, {x}, {y});\n",
                                 id = id,
                                 idx = idx,
                                 obj_name = obj_name,
-                                target_room = target_room,
+                                clean_room = clean_room,
                                 x = ent.x,
                                 y = ent.y
                             ));

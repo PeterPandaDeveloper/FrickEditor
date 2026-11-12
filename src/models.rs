@@ -336,6 +336,9 @@ pub enum MazePropType {
     Poster,             // oMazeSign_Poster
     ArcadeCabinet,      // oMazeProp_ArcadeCabinet
     EscapeDoor,         // oInteraction_Escape
+    SalvageChair,       // oSalvage_Chair (Silla de Inspección / Salvamento)
+    SalvageCassette,    // oSalvage_Cassette (Reproductor de audio de prueba)
+    SalvageShock,       // oSalvage_Taser (Botón de electrochoque)
 }
 
 impl MazePropType {
@@ -347,6 +350,9 @@ impl MazePropType {
             Self::Poster => "oMazeSign_Poster",
             Self::ArcadeCabinet => "oMazeProp_ArcadeCabinet",
             Self::EscapeDoor => "oInteraction_Escape",
+            Self::SalvageChair => "oSalvageHead",
+            Self::SalvageCassette => "oSalvageOpener_Salvage",
+            Self::SalvageShock => "oSalvageSheet",
         }
     }
 }

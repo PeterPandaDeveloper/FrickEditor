@@ -281,6 +281,18 @@ pub fn draw_node_graph_ui(
     state: &mut FrickEditorState,
     custom_state: &mut NodeGraphCustomState,
 ) {
+    // Protección anti-crash: Garantizar que todo nodo tenga posición y orden Z
+    let mut x_offset = 60.0;
+    for node_id in state.graph.iter_nodes() {
+        if !state.node_positions.contains_key(node_id) {
+            state.node_positions.insert(node_id, egui::pos2(x_offset, 120.0));
+            x_offset += 250.0;
+        }
+    }
+    if state.node_order.len() != state.graph.iter_nodes().count() {
+        state.node_order = state.graph.iter_nodes().collect();
+    }
+
     let _response = state.draw_graph_editor(
         ui,
         AllMyNodeTemplates,
@@ -302,6 +314,7 @@ pub fn create_default_murray_graph() -> (FrickGraph, FrickEditorState) {
             NodeTemplate::EventOnWindowKnock.build_node(graph, &mut custom, node_id);
         },
     );
+    state.node_positions.insert(knock_node, egui::pos2(50.0, 80.0));
 
     // Condición: ¿Persiana cerrada?
     let blind_cond = state.graph.add_node(
@@ -311,6 +324,7 @@ pub fn create_default_murray_graph() -> (FrickGraph, FrickEditorState) {
             NodeTemplate::ConditionIsBlindClosed.build_node(graph, &mut custom, node_id);
         },
     );
+    state.node_positions.insert(blind_cond, egui::pos2(300.0, 80.0));
 
     // Acción: Jumpscare
     let scare_node = state.graph.add_node(
@@ -320,6 +334,7 @@ pub fn create_default_murray_graph() -> (FrickGraph, FrickEditorState) {
             NodeTemplate::ActionTriggerJumpscare.build_node(graph, &mut custom, node_id);
         },
     );
+    state.node_positions.insert(scare_node, egui::pos2(560.0, 80.0));
 
     // Conectar knock -> eval blind
     if let (Some(out_param), Some(in_param)) = (

@@ -1928,8 +1928,10 @@ impl FrickEditorApp {
                     "MinigameMaze_3",
                     "MinigameMaze_4",
                     "MinigameMaze_5",
+                    "Room 18: SalvageResults (Sala de Salvamento)",
+                    "Room 8: SalvageEnding (Final de Salvamento)",
                     "MinigameMaze_Vents",
-                    "MinigameMaze_Endless",
+                    "Fredbear_3DMaze",
                 ];
                 egui::ComboBox::from_label("")
                     .selected_text(&self.project.advanced.target_maze_room)
@@ -1950,6 +1952,9 @@ impl FrickEditorApp {
                     (MazePropType::Poster, "Póster de Pared", ic::IMAGE),
                     (MazePropType::ArcadeCabinet, "Máquina Arcade", ic::GAME_CONTROLLER),
                     (MazePropType::EscapeDoor, "Puerta de Escape / Salida", ic::DOOR_OPEN),
+                    (MazePropType::SalvageChair, "Silla de Salvamento / Inspección (Room 18)", ic::SHIELD),
+                    (MazePropType::SalvageCassette, "Grabadora de Cassette (Audio Prompt)", ic::SPEAKER_HIGH),
+                    (MazePropType::SalvageShock, "Taser de Electrochoque (3 usos)", ic::LIGHTNING),
                 ];
 
                 for (prop_type, desc, icon) in props.iter() {
@@ -1980,6 +1985,40 @@ impl FrickEditorApp {
             });
 
             cols[0].add_space(6.0);
+            if self.project.advanced.target_maze_room.contains("Salvage") {
+                if cols[0].button(RichText::new(format!("{} Auto-configurar Setup Room 18", ic::LIGHTNING)).strong().color(Color32::from_rgb(255, 200, 80))).clicked() {
+                    self.project.advanced.maze_entities.clear();
+                    self.project.advanced.maze_entities.push(EnvironmentEntity {
+                        prop_type: MazePropType::SalvageChair,
+                        x: 320,
+                        y: 110,
+                        scale_x: 1.0,
+                        scale_y: 1.0,
+                    });
+                    self.project.advanced.maze_entities.push(EnvironmentEntity {
+                        prop_type: MazePropType::AnimatronicSpawn,
+                        x: 320,
+                        y: 80,
+                        scale_x: 1.0,
+                        scale_y: 1.0,
+                    });
+                    self.project.advanced.maze_entities.push(EnvironmentEntity {
+                        prop_type: MazePropType::SalvageCassette,
+                        x: 160,
+                        y: 280,
+                        scale_x: 1.0,
+                        scale_y: 1.0,
+                    });
+                    self.project.advanced.maze_entities.push(EnvironmentEntity {
+                        prop_type: MazePropType::SalvageShock,
+                        x: 480,
+                        y: 280,
+                        scale_x: 1.0,
+                        scale_y: 1.0,
+                    });
+                }
+                cols[0].add_space(4.0);
+            }
             cols[0].horizontal(|ui| {
                 ui.label(RichText::new(format!("Entidades colocadas: {}", self.project.advanced.maze_entities.len())).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2015,6 +2054,37 @@ impl FrickEditorApp {
             }
             painter.rect_stroke(rect, 4.0, Stroke::new(2.0_f32, Color32::GRAY));
 
+            let is_salvage = self.project.advanced.target_maze_room.contains("Salvage");
+            if is_salvage {
+                // Haz de luz cenital (Spotlight de la sala de salvamento)
+                painter.circle_filled(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Color32::from_rgba_unmultiplied(255, 235, 180, 20));
+                painter.circle_stroke(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 180, 45)));
+
+                // Zona del Sujeto / Silla de Inspección
+                let chair_box = Rect::from_center_size(Pos2::new(rect.center().x, rect.min.y + 110.0), Vec2::new(140.0, 95.0));
+                painter.rect_filled(chair_box, 4.0, Color32::from_rgba_unmultiplied(70, 35, 20, 140));
+                painter.rect_stroke(chair_box, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(200, 130, 70)));
+                painter.text(Pos2::new(chair_box.center().x, chair_box.min.y + 16.0), egui::Align2::CENTER_CENTER, "ZONA SUJETO DE PRUEBA", egui::FontId::proportional(11.0), Color32::from_rgb(255, 180, 100));
+
+                // Mesa de Documentación / Taser / Cassette (Primer Plano)
+                let table_rect = Rect::from_min_max(Pos2::new(rect.min.x + 30.0, rect.min.y + 230.0), Pos2::new(rect.max.x - 30.0, rect.max.y - 15.0));
+                painter.rect_filled(table_rect, 6.0, Color32::from_rgba_unmultiplied(40, 25, 15, 220));
+                painter.rect_stroke(table_rect, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(110, 75, 45)));
+                painter.text(table_rect.center(), egui::Align2::CENTER_CENTER, "MESA DE TRABAJO (Grabadora / Taser / Hoja de Salvamento)", egui::FontId::proportional(11.0), Color32::from_rgb(190, 160, 130));
+
+                // Indicador HUD de Tensión & Shocks
+                let hud_rect = Rect::from_min_max(Pos2::new(rect.min.x + 10.0, rect.min.y + 8.0), Pos2::new(rect.max.x - 10.0, rect.min.y + 30.0));
+                painter.rect_filled(hud_rect, 3.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
+                painter.rect_stroke(hud_rect, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(100, 100, 100)));
+                painter.text(
+                    hud_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "ROOM 18: SALVAGE RESULTS — Tensión: 0% / 100% | Shocks: 3 | Valor: $500",
+                    egui::FontId::proportional(11.5),
+                    Color32::from_rgb(255, 215, 0),
+                );
+            }
+
             let mut to_delete = None;
             let scale_canvas_x = 540.0 / 640.0;
 
@@ -2030,6 +2100,9 @@ impl FrickEditorApp {
                     MazePropType::Poster => ic::IMAGE,
                     MazePropType::ArcadeCabinet => ic::GAME_CONTROLLER,
                     MazePropType::EscapeDoor => ic::DOOR_OPEN,
+                    MazePropType::SalvageChair => ic::SHIELD,
+                    MazePropType::SalvageCassette => ic::SPEAKER_HIGH,
+                    MazePropType::SalvageShock => ic::LIGHTNING,
                 };
 
                 let color = match entity.prop_type {
@@ -2037,6 +2110,9 @@ impl FrickEditorApp {
                     MazePropType::Hatchet => Color32::LIGHT_GRAY,
                     MazePropType::GiftBox => Color32::from_rgb(230, 180, 40),
                     MazePropType::EscapeDoor => Color32::from_rgb(60, 200, 80),
+                    MazePropType::SalvageChair => Color32::from_rgb(180, 100, 50),
+                    MazePropType::SalvageCassette => Color32::from_rgb(70, 150, 230),
+                    MazePropType::SalvageShock => Color32::from_rgb(240, 200, 40),
                     _ => Color32::from_rgb(100, 180, 255),
                 };
 
