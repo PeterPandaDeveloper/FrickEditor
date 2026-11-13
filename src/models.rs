@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -316,6 +316,7 @@ pub struct AnimatronicProject {
 
     // --- Mecánicas Avanzadas, Cámaras y Entornos 3D ---
     pub advanced: AdvancedMechanicsConfig,
+    pub salvage_placement: CustomSalvagePlacement,
 }
 
 /// Nodos de ruta en el mapa de cámaras (MainLocationMap)
@@ -420,6 +421,56 @@ pub struct EnvironmentEntity {
     pub scale_y: f32,
 }
 
+/// Posicionamiento de Animatrónico en la Locación de Salvamento / Minijuegos 3D
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CustomSalvagePlacement {
+    pub enabled: bool,
+    pub target_room: String,
+    pub x: i32,
+    pub y: i32,
+    pub salvage_sprite_path: Option<PathBuf>,
+    pub gml_object_type: String,
+}
+
+impl Default for CustomSalvagePlacement {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            target_room: "MinigameMaze_1".to_string(),
+            x: 1128,
+            y: 96,
+            salvage_sprite_path: None,
+            gml_object_type: "oInteraction_Animatronic".to_string(),
+        }
+    }
+}
+
+/// Instancia real extraída de las salas de GameMaker (MinigameMaze 1 a 5)
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MazeRoomInstance {
+    pub object: String,
+    pub id: i64,
+    pub x: i32,
+    pub y: i32,
+    pub sx: f32,
+    pub sy: f32,
+}
+
+/// Información completa de una sala de laberinto/salvamento
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MazeRoomData {
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+    pub instances: Vec<MazeRoomInstance>,
+}
+
+/// Carga los datos maestros de las 6 salas de laberintos de Frickbear's 3
+pub fn load_default_maze_rooms() -> HashMap<String, MazeRoomData> {
+    let json_bytes = include_str!("../assets/maze_rooms.json");
+    serde_json::from_str(json_bytes).unwrap_or_default()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AdvancedMechanicsConfig {
     pub use_node_editor: bool, // Híbrido: True = Nodos Visuales, False = Código GML Manual
@@ -480,6 +531,7 @@ impl Default for AnimatronicProject {
             sound_defeat: auto_file("murray_knock2.ogg"),
             sound_jumpscare: auto_file("murray_jumpscare.ogg"),
             advanced: AdvancedMechanicsConfig::default(),
+            salvage_placement: CustomSalvagePlacement::default(),
         }
     }
 }
