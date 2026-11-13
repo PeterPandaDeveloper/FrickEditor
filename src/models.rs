@@ -435,7 +435,7 @@ pub struct CustomSalvagePlacement {
 impl Default for CustomSalvagePlacement {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false, // Desactivado por defecto (el usuario decide si colocar un animatrónico)
             target_room: "MinigameMaze_1".to_string(),
             x: 1128,
             y: 96,
