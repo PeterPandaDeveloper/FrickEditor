@@ -9,7 +9,7 @@ use launcher::GameLauncher;
 use mod_manager::ModManager;
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
-use models::{AnimatronicArchetype, AnimatronicProject, CameraRouteNode, CountermeasureType, EnvironmentEntity, MazePropType};
+use models::{AnimatronicArchetype, AnimatronicProject, CameraRouteNode, CountermeasureType, EnvironmentEntity, MazePropType, SalvageLocationIndex};
 use rodio::{Decoder, OutputStream, Sink};
 use std::collections::HashMap;
 use std::fs::File;
@@ -82,15 +82,15 @@ struct FrickEditorApp {
     selected_code_file: usize,
     sim_blind_or_door_closed: bool,
     sim_flashlight_on: bool,
-    // Estado de Simulación de Salvamento (Room 18: SalvageResults)
-    salvage_tension: f32,
-    salvage_shocks_remaining: u8,
-    salvage_audio_playing: bool,
-    salvage_audio_timer: f32,
-    salvage_shock_flash: f32,
+    // Estado de Salvage Locations (Five Nights at Frickbear's 3: MinigameMaze 1 a 5)
+    selected_salvage_location: SalvageLocationIndex,
+    salvage_flashlight: bool,
+    salvage_exploration_distance: f32,
+    salvage_animatronic_encountered: bool,
+    salvage_is_recruited: bool,
     salvage_jumpscare_triggered: bool,
-    salvage_prompt_step: u8,
-    salvage_sheet_checks: [bool; 5],
+    salvage_scrap_collected: u32,
+    salvage_arcade_boards: u32,
 }
 
 impl FrickEditorApp {
@@ -144,14 +144,14 @@ impl FrickEditorApp {
             selected_code_file: 0,
             sim_blind_or_door_closed: false,
             sim_flashlight_on: false,
-            salvage_tension: 0.0,
-            salvage_shocks_remaining: 3,
-            salvage_audio_playing: false,
-            salvage_audio_timer: 0.0,
-            salvage_shock_flash: 0.0,
+            selected_salvage_location: SalvageLocationIndex::Location1Fnaf1,
+            salvage_flashlight: true,
+            salvage_exploration_distance: 0.0,
+            salvage_animatronic_encountered: true,
+            salvage_is_recruited: false,
             salvage_jumpscare_triggered: false,
-            salvage_prompt_step: 1,
-            salvage_sheet_checks: [false; 5],
+            salvage_scrap_collected: 120,
+            salvage_arcade_boards: 1,
         }
     }
 
@@ -238,19 +238,6 @@ impl eframe::App for FrickEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dt = ctx.input(|i| i.stable_dt);
         self.sim_time += dt;
-        if self.salvage_audio_playing {
-            self.salvage_audio_timer -= dt;
-            self.salvage_tension = (self.salvage_tension + dt * 11.5).min(100.0);
-            if self.salvage_audio_timer <= 0.0 {
-                self.salvage_audio_playing = false;
-            }
-        }
-        if self.salvage_tension >= 100.0 && !self.salvage_jumpscare_triggered {
-            self.salvage_jumpscare_triggered = true;
-        }
-        if self.salvage_shock_flash > 0.0 {
-            self.salvage_shock_flash = (self.salvage_shock_flash - dt * 2.8).max(0.0);
-        }
         ctx.request_repaint();
 
         // ==========================================================
@@ -411,7 +398,7 @@ impl eframe::App for FrickEditorApp {
                 ui.selectable_value(
                     &mut self.active_tab,
                     ActiveTab::Environment3DBuilder,
-                    RichText::new(format!("{}  6. Constructor 3D", ic::CUBE))
+                    RichText::new(format!("{}  6. Salvage Locations (3D)", ic::COMPASS))
                         .size(13.0)
                         .color(Color32::from_rgb(110, 230, 255))
                         .strong(),
@@ -2138,13 +2125,15 @@ impl FrickEditorApp {
     // --------------------------------------------------------------
     // PESTAÑA 6: CONSTRUCTOR 3D (LABERINTOS, CONDUCTOS & MODO ENDLESS)
     // --------------------------------------------------------------
+    // PESTAÑA 6: CONSTRUCTOR 3D (SALVAGE LOCATIONS 1 A 5 - FRICKBEAR'S 3)
+    // --------------------------------------------------------------
     fn ui_environment_3d_builder_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         // Selector de Modo Superior: Simulador Jugable vs Plano Técnico
         ui.horizontal(|ui| {
             ui.selectable_value(
                 &mut self.salvage_tab_mode,
                 SalvageTabMode::LiveSimulator,
-                RichText::new(format!("{}  Simulador Jugable a 60 FPS (Room 18: Salvamento)", ic::GAME_CONTROLLER))
+                RichText::new(format!("{}  Simulador Jugable 3D (Salvage Locations 1-5)", ic::GAME_CONTROLLER))
                     .strong()
                     .size(13.5)
                     .color(Color32::from_rgb(255, 185, 60)),
@@ -2172,442 +2161,430 @@ impl FrickEditorApp {
             let j2_t = self.project.jumpscare_frame_2.clone().and_then(|p| self.get_or_load_tex(ctx, &p, 420));
 
             ui.columns(2, |cols| {
-                // COLUMNA 1: CONTROLES DE SALVAMENTO & CHECKLIST
-                cols[0].heading(format!("{}  Mesa de Salvamento (Room 18: SalvageResults)", ic::SHIELD));
-                cols[0].label("Pon a prueba al animatrónico con los prompts de audio. Si se mueve o acumula tensión, aplica una descarga eléctrica antes de que ataque.");
+                // ==============================================================
+                // COLUMNA 1: CONTROLES DE EXPLORACIÓN Y RECOLECCIÓN
+                // ==============================================================
+                cols[0].heading(format!("{}  Explorador 3D (Salvage Locations)", ic::GHOST));
+                cols[0].label(
+                    RichText::new("Las 5 locaciones nocturnas de recolección y exploración 3D de Frickbear's 3. Explora con linterna, recolecta chatarra, recupera placas de arcade y rescata animatrónicos para Backdoor Trading.")
+                        .size(12.0)
+                        .color(Color32::from_gray(180)),
+                );
                 cols[0].add_space(8.0);
 
-                // Barra de Tensión
-                let tension_pct = (self.salvage_tension / 100.0).clamp(0.0, 1.0);
-                let (tension_col, tension_status) = if self.salvage_tension < 35.0 {
-                    (Color32::from_rgb(70, 215, 110), "FASE 1: Sujeto Inerte (Estable)")
-                } else if self.salvage_tension < 75.0 {
-                    (Color32::from_rgb(240, 185, 40), "FASE 2: Movimiento Detectado (Alerta)")
-                } else {
-                    (Color32::from_rgb(240, 65, 65), "FASE 3: HOSTILIDAD INMINENTE (Peligro)")
-                };
+                // Selector de las 5 Locaciones de Frickbear's 3
+                cols[0].label(RichText::new("Seleccionar Locación de Salvamento:").strong().size(12.5));
+                for loc in SalvageLocationIndex::all() {
+                    let is_sel = *loc == self.selected_salvage_location;
+                    let text = format!("{}  {}", loc.room_name(), loc.display_name());
+                    if cols[0].selectable_label(is_sel, text).clicked() {
+                        self.selected_salvage_location = *loc;
+                        self.salvage_jumpscare_triggered = false;
+                        self.salvage_animatronic_encountered = true;
+                    }
+                }
+                cols[0].add_space(6.0);
 
-                egui::Frame::group(cols[0].style())
-                    .fill(Color32::from_rgb(22, 25, 32))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 65, 80)))
+                // Tarjeta de información de la sala actual
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(20, 24, 32))
                     .rounding(Rounding::same(6.0))
                     .inner_margin(8.0)
                     .show(&mut cols[0], |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Nivel de Tensión:").strong());
-                            ui.label(RichText::new(format!("{:.0}%", self.salvage_tension)).strong().color(tension_col));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(tension_status).size(11.0).color(tension_col));
-                            });
+                            ui.label(RichText::new("Banda Sonora (BSO):").strong().color(Color32::from_rgb(255, 200, 80)));
+                            ui.label(RichText::new(self.selected_salvage_location.soundtrack_name()).size(12.0).color(Color32::WHITE));
                         });
-                        ui.add_space(4.0);
-                        let bar = egui::ProgressBar::new(tension_pct)
-                            .fill(tension_col)
-                            .animate(self.salvage_audio_playing);
-                        ui.add(bar);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Sala GameMaker:").strong().color(Color32::from_rgb(140, 180, 255)));
+                            ui.label(RichText::new(self.selected_salvage_location.room_name()).monospace().color(Color32::LIGHT_GRAY));
+                        });
                     });
 
                 cols[0].add_space(8.0);
 
-                // Botones Interactivos: Grabadora y Electrochoque
+                // Controles de Jugador / Linterna
+                cols[0].label(RichText::new("Controles de Exploración:").strong());
                 cols[0].horizontal(|ui| {
-                    if self.salvage_audio_playing {
-                        let audio_lbl = format!("{} Reproduciendo ({:.1}s)...", ic::SPEAKER_HIGH, self.salvage_audio_timer);
-                        ui.add_enabled(false, egui::Button::new(RichText::new(audio_lbl).color(Color32::YELLOW)));
+                    let btn_light = if self.salvage_flashlight {
+                        RichText::new(format!("{} Linterna: ENCENDIDA", ic::FLASHLIGHT)).color(Color32::from_rgb(255, 220, 80)).strong()
                     } else {
-                        let btn_txt = format!("{} Reproducir Audio Prompt #{}", ic::PLAY, (self.salvage_prompt_step % 5) + 1);
-                        let can_play = !self.salvage_jumpscare_triggered;
-                        if ui.add_enabled(can_play, egui::Button::new(RichText::new(btn_txt).strong().color(Color32::WHITE)).fill(Color32::from_rgb(40, 110, 200))).clicked() {
-                            self.salvage_audio_playing = true;
-                            self.salvage_audio_timer = 4.0;
-                            let snd = self.project.sound_knock_alert.clone();
-                            if let Some(p) = snd {
-                                self.play_audio(&p);
-                            }
-                        }
+                        RichText::new(format!("{} Linterna: APAGADA", ic::FLASHLIGHT)).color(Color32::GRAY)
+                    };
+                    if ui.button(btn_light).clicked() {
+                        self.salvage_flashlight = !self.salvage_flashlight;
                     }
 
-                    let taser_can_use = self.salvage_shocks_remaining > 0 && !self.salvage_jumpscare_triggered;
-                    let taser_txt = format!("{} Taser ({} usos)", ic::LIGHTNING, self.salvage_shocks_remaining);
-                    let taser_btn = egui::Button::new(RichText::new(taser_txt).strong().color(Color32::BLACK))
-                        .fill(if taser_can_use { Color32::from_rgb(255, 200, 40) } else { Color32::GRAY });
-
-                    if ui.add_enabled(taser_can_use, taser_btn).clicked() {
-                        self.salvage_shocks_remaining = self.salvage_shocks_remaining.saturating_sub(1);
-                        self.salvage_shock_flash = 1.0;
-                        self.salvage_tension = (self.salvage_tension - 45.0).max(0.0);
-                        let snd = self.project.sound_defeat.clone();
-                        if let Some(p) = snd {
-                            self.play_audio(&p);
+                    if ui.button(format!("{} Avanzar Pasillo (+Distancia)", ic::COMPASS)).clicked() {
+                        self.salvage_exploration_distance += 15.0;
+                        if (self.salvage_exploration_distance as u32 % 30) == 0 {
+                            self.salvage_scrap_collected += 25;
                         }
                     }
                 });
 
                 cols[0].add_space(8.0);
+
+                // Inventario / Recompensas de Salvamento de Frickbear's 3
+                cols[0].label(RichText::new("Botín Recolectado en esta Noche:").strong());
+                cols[0].horizontal(|ui| {
+                    ui.label(format!("{} Chatarra / Tokens:", ic::COIN));
+                    ui.label(RichText::new(format!("{} pts", self.salvage_scrap_collected)).strong().color(Color32::from_rgb(255, 215, 60)));
+                    ui.add_space(12.0);
+                    ui.label(format!("{} Placas Arcade:", ic::GAME_CONTROLLER));
+                    ui.label(RichText::new(format!("{}/5 desbloqueadas", self.salvage_arcade_boards)).strong().color(Color32::from_rgb(90, 220, 150)));
+                });
+
+                cols[0].add_space(10.0);
                 cols[0].separator();
-                cols[0].add_space(4.0);
-
-                // Hoja de Documentación (Checklist)
-                cols[0].label(RichText::new(format!("{} Hoja de Documentación de Salvamento:", ic::CLIPBOARD_TEXT)).strong());
-                cols[0].add_space(4.0);
-
-                let check_labels = [
-                    "Prompt 1: Verificación de respuesta motriz",
-                    "Prompt 2: Prueba de frecuencia y modulación de audio",
-                    "Prompt 3: Estimulación de reconocimiento óptico",
-                    "Prompt 4: Test de sincronización de servomotores",
-                    "Prompt 5: Medición de hostilidad agresiva latente",
-                ];
-
-                for i in 0..5 {
-                    cols[0].horizontal(|ui| {
-                        let is_current = (self.salvage_prompt_step as usize) == i;
-                        if ui.checkbox(&mut self.salvage_sheet_checks[i], check_labels[i]).changed() {
-                            if self.salvage_sheet_checks[i] && is_current {
-                                self.salvage_prompt_step = (i + 1) as u8;
-                            }
-                        }
-                    });
-                }
-
                 cols[0].add_space(6.0);
-                let completed_count = self.salvage_sheet_checks.iter().filter(|c| **c).count();
-                if completed_count == 5 && !self.salvage_jumpscare_triggered {
-                    egui::Frame::group(cols[0].style())
-                        .fill(Color32::from_rgb(18, 45, 25))
-                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(70, 215, 110)))
-                        .inner_margin(8.0)
-                        .show(&mut cols[0], |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(ic::CHECK_CIRCLE).size(20.0).color(Color32::from_rgb(80, 230, 120)));
-                                ui.label(RichText::new("¡SALVAMENTO COMPLETADO CON ÉXITO!\nRecompensa de la noche: $500 añadidos a fondos.").strong().color(Color32::WHITE));
-                            });
-                        });
-                }
 
-                cols[0].add_space(8.0);
-                if cols[0].button(format!("{} Reiniciar Prueba de Salvamento", ic::ARROWS_CLOCKWISE)).clicked() {
-                    self.salvage_tension = 0.0;
-                    self.salvage_shocks_remaining = 3;
-                    self.salvage_audio_playing = false;
-                    self.salvage_audio_timer = 0.0;
-                    self.salvage_shock_flash = 0.0;
-                    self.salvage_jumpscare_triggered = false;
-                    self.salvage_prompt_step = 0;
-                    self.salvage_sheet_checks = [false; 5];
-                    self.stop_audio();
-                }
-
-                // COLUMNA 2: LIENZO JUGABLE A 60 FPS
-            cols[1].heading(format!("{}  Sala de Salvamento (Cámara en Primera Persona)", ic::MONITOR_PLAY));
-            cols[1].label("Perspectiva del guardia frente a la mesa de inspección:");
-            cols[1].add_space(8.0);
-
-            let (rect, resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click());
-            let painter = cols[1].painter_at(rect);
-
-            // 1. Fondo de la sala oscura
-            painter.rect_filled(rect, 6.0, Color32::from_rgb(10, 12, 16));
-
-            // 2. Luz de cono cenital (Spotlight central parpadeante)
-            let flicker = if self.salvage_audio_playing { (t * 25.0).sin() * 8.0 } else { (t * 3.0).sin() * 3.0 };
-            let spot_center = Pos2::new(rect.center().x, rect.min.y + 115.0);
-            painter.circle_filled(spot_center, 120.0 + flicker, Color32::from_rgba_unmultiplied(240, 220, 170, 18));
-            painter.circle_filled(spot_center, 75.0 + (flicker * 0.5), Color32::from_rgba_unmultiplied(255, 235, 190, 24));
-
-            // 3. Silla de salvamento detrás del sujeto
-            let chair_rect = Rect::from_center_size(Pos2::new(spot_center.x, spot_center.y + 40.0), Vec2::new(160.0, 150.0));
-            painter.rect_filled(chair_rect, 4.0, Color32::from_rgb(25, 22, 20));
-            painter.rect_stroke(chair_rect, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(50, 42, 38)));
-
-            // 4. Renderizado del Animatrónico en la Silla
-            if self.salvage_jumpscare_triggered {
-                // JUMPSCARE DE SALVAMENTO
-                let cycle = (t % 1.2) / 1.2;
-                let zoom = 0.70 + (cycle.powf(0.40) * 0.75);
-                let sz = Vec2::new(340.0 * zoom, 340.0 * zoom);
-                let j_shake_x = (t * 80.0).sin() * 8.0;
-                let j_pos = Pos2::new(rect.center().x + j_shake_x, rect.center().y + (10.0 * zoom));
-
-                if let Some(tex) = &j0_t {
-                    painter.image(tex.id(), Rect::from_center_size(j_pos, sz), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                }
-                let head_choice = if ((t * 18.0) as i32) % 2 == 0 { &j1_t } else { &j2_t };
-                if let Some(tex) = head_choice {
-                    let jaw_jitter = (t * 40.0).sin() * 4.0 * zoom;
-                    painter.image(tex.id(), Rect::from_center_size(Pos2::new(j_pos.x, j_pos.y + jaw_jitter), sz), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                }
-
-                // Marco rojo de muerte
-                painter.rect_stroke(rect, 6.0, Stroke::new(6.0_f32, Color32::from_rgb(240, 40, 40)));
-                painter.text(
-                    Pos2::new(rect.center().x, rect.min.y + 30.0),
-                    egui::Align2::CENTER_CENTER,
-                    "¡HAS SIDO ASESINADO! — EL SUJETO ATACÓ",
-                    egui::FontId::proportional(16.0),
-                    Color32::from_rgb(255, 80, 80),
+                // Encuentro con Animatrónico (oInteraction_Animatronic - skin_salvage_dialogue)
+                cols[0].heading(format!("{} Encuentro con Animatrónico (Backdoor Trading)", ic::USER));
+                cols[0].label(
+                    RichText::new("Mecánica auténtica de Frickbear's: Puedes salvar (reclutar) al animatrónico para usarlo o venderlo, o dejarlo en su sala. Si lo provocas, activará su jumpscare 3D.")
+                        .size(11.5)
+                        .color(Color32::from_gray(170)),
                 );
-            } else {
-                // FASES VIVAS DEL ANIMATRÓNICO
-                let anim_center = Pos2::new(rect.center().x, rect.min.y + 130.0);
+                cols[0].add_space(6.0);
 
-                if self.salvage_tension < 35.0 {
-                    // Fase 1: Sujeto Inerte / Cabeza Baja
-                    let breathe = (t * 2.0).sin() * 2.5;
-                    if let Some(tex) = &body_t {
-                        let b_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y + 50.0 + breathe), Vec2::new(170.0, 125.0));
-                        painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                    }
-                    if let Some(tex) = &head_t {
-                        let h_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y - 12.0 + (breathe * 0.7)), Vec2::new(145.0, 125.0));
-                        painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                    }
-                } else if self.salvage_tension < 75.0 {
-                    // Fase 2: Alerta / Movimiento y Tics
-                    let twitch = if (t * 8.0).sin() > 0.6 { (t * 45.0).cos() * 3.5 } else { 0.0 };
-                    if let Some(tex) = &body_t {
-                        let b_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y + 45.0), Vec2::new(170.0, 125.0));
-                        painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                    }
-                    if let Some(tex) = &head_t {
-                        let h_rect = Rect::from_center_size(Pos2::new(anim_center.x + twitch, anim_center.y - 18.0), Vec2::new(148.0, 128.0));
-                        painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                    }
-                } else {
-                    // Fase 3: Hostilidad Inminente / Temblores Fuertes & Mirada Fija
-                    let tremor_x = (t * 55.0).sin() * 4.0;
-                    let tremor_y = (t * 65.0).cos() * 3.0;
-                    if let Some(tex) = &body_t {
-                        let b_rect = Rect::from_center_size(Pos2::new(anim_center.x + tremor_x, anim_center.y + 40.0), Vec2::new(175.0, 130.0));
-                        painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                    }
-                    let host_head = scare_t.as_ref().or(j1_t.as_ref()).or(head_t.as_ref());
-                    if let Some(tex) = host_head {
-                        let h_rect = Rect::from_center_size(Pos2::new(anim_center.x + tremor_x, anim_center.y - 25.0 + tremor_y), Vec2::new(155.0, 135.0));
-                        painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                    }
-
-                    // Ojos brillantes de agresión
-                    painter.circle_filled(Pos2::new(anim_center.x - 18.0 + tremor_x, anim_center.y - 30.0 + tremor_y), 3.5, Color32::from_rgb(255, 60, 40));
-                    painter.circle_filled(Pos2::new(anim_center.x + 18.0 + tremor_x, anim_center.y - 30.0 + tremor_y), 3.5, Color32::from_rgb(255, 60, 40));
+                if self.salvage_is_recruited {
+                    cols[0].colored_label(Color32::from_rgb(80, 230, 120), format!("{} ¡Animatrónico Reclutado Exitosamente! (Añadido a Backdoor Trading)", ic::CHECK));
                 }
 
-                // 5. Mesa de trabajo en primer plano (Foreground)
-                let table_rect = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - 75.0), rect.max);
-                painter.rect_filled(table_rect, 0.0, Color32::from_rgb(32, 22, 16));
-                painter.line_segment([table_rect.left_top(), table_rect.right_top()], Stroke::new(2.5_f32, Color32::from_rgb(60, 42, 32)));
+                cols[0].horizontal_wrapped(|ui| {
+                    if ui.button(RichText::new(format!("{} Salvar (Reclutar Animatrónico)", ic::CHECK_CIRCLE)).color(Color32::from_rgb(80, 220, 120)).strong()).clicked() {
+                        self.salvage_is_recruited = true;
+                        self.salvage_jumpscare_triggered = false;
+                        self.status_message = format!("¡Animatrónico salvado y reclutado en {}!", self.selected_salvage_location.room_name());
+                        self.status_is_error = false;
+                    }
 
-                // Grabadora en la mesa (Izquierda)
-                let cassette_box = Rect::from_center_size(Pos2::new(rect.min.x + 95.0, rect.max.y - 38.0), Vec2::new(90.0, 48.0));
-                painter.rect_filled(cassette_box, 3.0, Color32::from_rgb(45, 50, 58));
-                painter.rect_stroke(cassette_box, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(80, 85, 95)));
-                painter.text(cassette_box.center(), egui::Align2::CENTER_CENTER, format!("{} CASSETTE", ic::SPEAKER_HIGH), egui::FontId::proportional(10.5), Color32::WHITE);
+                    if ui.button(format!("{} Dejar (Ignorar y Salir)", ic::DOOR_OPEN)).clicked() {
+                        self.salvage_animatronic_encountered = false;
+                        self.salvage_is_recruited = false;
+                        self.salvage_jumpscare_triggered = false;
+                    }
 
-                // Hoja de documentación en la mesa (Centro)
-                let paper_box = Rect::from_center_size(Pos2::new(rect.center().x, rect.max.y - 35.0), Vec2::new(110.0, 52.0));
-                painter.rect_filled(paper_box, 2.0, Color32::from_rgb(220, 215, 195));
-                painter.rect_stroke(paper_box, 2.0, Stroke::new(1.0_f32, Color32::from_rgb(160, 150, 130)));
-                painter.text(paper_box.center(), egui::Align2::CENTER_CENTER, "DOCUMENTS", egui::FontId::proportional(11.0), Color32::BLACK);
+                    if ui.button(RichText::new(format!("{} Provocar Hostilidad (Susto 3D)", ic::WARNING)).color(Color32::from_rgb(255, 90, 90))).clicked() {
+                        self.salvage_jumpscare_triggered = true;
+                    }
 
-                // Taser en la mesa (Derecha)
-                let taser_box = Rect::from_center_size(Pos2::new(rect.max.x - 95.0, rect.max.y - 38.0), Vec2::new(85.0, 45.0));
-                let taser_col = if self.salvage_shocks_remaining > 0 { Color32::from_rgb(210, 160, 30) } else { Color32::from_rgb(55, 58, 65) };
-                painter.rect_filled(taser_box, 3.0, taser_col);
-                painter.rect_stroke(taser_box, 3.0, Stroke::new(1.0_f32, Color32::WHITE));
-                painter.text(taser_box.center(), egui::Align2::CENTER_CENTER, format!("{} SHOCK", ic::LIGHTNING), egui::FontId::proportional(11.0), Color32::BLACK);
-            }
+                    if ui.button(format!("{} Reiniciar Exploración", ic::ARROW_COUNTER_CLOCKWISE)).clicked() {
+                        self.salvage_jumpscare_triggered = false;
+                        self.salvage_is_recruited = false;
+                        self.salvage_animatronic_encountered = true;
+                        self.salvage_exploration_distance = 0.0;
+                    }
+                });
 
-            // 6. Efecto de Flash de Electrochoque
-            if self.salvage_shock_flash > 0.0 {
-                let alpha = (self.salvage_shock_flash * 220.0).min(255.0) as u8;
-                painter.rect_filled(rect, 6.0, Color32::from_rgba_unmultiplied(210, 240, 255, alpha));
+                // ==============================================================
+                // COLUMNA 2: VIEWPORT 3D EN PRIMERA PERSONA CON PERSPECTIVA
+                // ==============================================================
+                cols[1].heading(format!("{}  Perspectiva 3D en Primera Persona ({})", ic::EYE, self.selected_salvage_location.room_name()));
+                cols[1].label("Atmósfera auténtica en 3D: perspectiva de pasillo, iluminación de linterna y presencia del animatrónico.");
+                cols[1].add_space(6.0);
 
-                // Líneas de relámpago
-                let cx = rect.center().x;
-                let cy = rect.center().y;
-                painter.line_segment([Pos2::new(cx - 60.0, cy - 80.0), Pos2::new(cx, cy)], Stroke::new(3.0_f32, Color32::WHITE));
-                painter.line_segment([Pos2::new(cx, cy), Pos2::new(cx + 50.0, cy + 60.0)], Stroke::new(3.0_f32, Color32::WHITE));
-            }
+                let (rect, resp) = cols[1].allocate_exact_size(Vec2::new(520.0, 360.0), Sense::click());
+                let painter = cols[1].painter_at(rect);
 
-            // Clic en la pantalla para interactuar
-            if resp.clicked() && !self.salvage_jumpscare_triggered {
-                self.salvage_tension = (self.salvage_tension + 8.0).min(100.0);
-            }
+                // Colores ambientales por locación
+                let (bg_col, floor_col, wall_col, accent_col) = match self.selected_salvage_location {
+                    SalvageLocationIndex::Location1Fnaf1 => (
+                        Color32::from_rgb(14, 12, 10),
+                        Color32::from_rgb(25, 20, 18),
+                        Color32::from_rgb(45, 25, 20),
+                        Color32::from_rgb(220, 180, 50),
+                    ),
+                    SalvageLocationIndex::Location2Fnaf2 => (
+                        Color32::from_rgb(16, 12, 24),
+                        Color32::from_rgb(22, 18, 32),
+                        Color32::from_rgb(40, 25, 55),
+                        Color32::from_rgb(180, 100, 220),
+                    ),
+                    SalvageLocationIndex::Location3Fnaf3 => (
+                        Color32::from_rgb(8, 18, 10),
+                        Color32::from_rgb(14, 25, 16),
+                        Color32::from_rgb(20, 45, 22),
+                        Color32::from_rgb(70, 210, 90),
+                    ),
+                    SalvageLocationIndex::Location4WilliamWoods => (
+                        Color32::from_rgb(6, 10, 16),
+                        Color32::from_rgb(12, 18, 22),
+                        Color32::from_rgb(15, 25, 35),
+                        Color32::from_rgb(90, 160, 230),
+                    ),
+                    SalvageLocationIndex::Location5SisterLocation => (
+                        Color32::from_rgb(8, 14, 24),
+                        Color32::from_rgb(15, 22, 34),
+                        Color32::from_rgb(25, 38, 55),
+                        Color32::from_rgb(60, 190, 255),
+                    ),
+                };
+
+                // 1. Fondo ambiental base
+                painter.rect_filled(rect, 6.0, bg_col);
+
+                // 2. Perspectiva 3D de pasillo / laberinto
+                let vanishing_pt = Pos2::new(rect.center().x, rect.center().y - 10.0);
+                let horizon_w = 70.0;
+                let horizon_h = 50.0;
+                let back_wall = Rect::from_center_size(vanishing_pt, Vec2::new(horizon_w, horizon_h));
+
+                // Pared del fondo
+                painter.rect_filled(back_wall, 2.0, wall_col);
+                painter.rect_stroke(back_wall, 2.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 30)));
+
+                // Suelo en perspectiva
+                let floor_points = vec![
+                    Pos2::new(back_wall.min.x, back_wall.max.y),
+                    Pos2::new(back_wall.max.x, back_wall.max.y),
+                    rect.right_bottom(),
+                    rect.left_bottom(),
+                ];
+                painter.add(egui::Shape::convex_polygon(floor_points, floor_col, Stroke::NONE));
+
+                // Pared Izquierda
+                let left_wall = vec![
+                    rect.left_top(),
+                    Pos2::new(back_wall.min.x, back_wall.min.y),
+                    Pos2::new(back_wall.min.x, back_wall.max.y),
+                    rect.left_bottom(),
+                ];
+                painter.add(egui::Shape::convex_polygon(left_wall, wall_col, Stroke::NONE));
+
+                // Pared Derecha
+                let right_wall = vec![
+                    Pos2::new(back_wall.max.x, back_wall.min.y),
+                    rect.right_top(),
+                    rect.right_bottom(),
+                    Pos2::new(back_wall.max.x, back_wall.max.y),
+                ];
+                painter.add(egui::Shape::convex_polygon(right_wall, wall_col, Stroke::NONE));
+
+                // Líneas de perspectiva en suelo (Baldosas / Rejillas)
+                let num_floor_lines = 6;
+                for i in 0..=num_floor_lines {
+                    let frac = i as f32 / num_floor_lines as f32;
+                    let bottom_x = rect.min.x + (rect.width() * frac);
+                    let top_x = back_wall.min.x + (back_wall.width() * frac);
+                    painter.line_segment(
+                        [Pos2::new(bottom_x, rect.max.y), Pos2::new(top_x, back_wall.max.y)],
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent_col.r(), accent_col.g(), accent_col.b(), 40)),
+                    );
+                }
+
+                // Líneas horizontales de suelo
+                for j in 1..=4 {
+                    let f = (j as f32 / 4.0).powf(1.6);
+                    let y = back_wall.max.y + ((rect.max.y - back_wall.max.y) * f);
+                    let x_left = rect.min.x + ((back_wall.min.x - rect.min.x) * (1.0 - f));
+                    let x_right = rect.max.x - ((rect.max.x - back_wall.max.x) * (1.0 - f));
+                    painter.line_segment(
+                        [Pos2::new(x_left, y), Pos2::new(x_right, y)],
+                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(accent_col.r(), accent_col.g(), accent_col.b(), 35)),
+                    );
+                }
+
+                // Lluvia en William's Woods
+                if self.selected_salvage_location == SalvageLocationIndex::Location4WilliamWoods {
+                    for r in 0..18 {
+                        let rx = rect.min.x + (((r as f32 * 37.0) + (t * 220.0)) % rect.width());
+                        let ry = rect.min.y + (((r as f32 * 53.0) + (t * 400.0)) % rect.height());
+                        painter.line_segment(
+                            [Pos2::new(rx, ry), Pos2::new(rx - 2.0, ry + 12.0)],
+                            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(160, 200, 255, 60)),
+                        );
+                    }
+                }
+
+                // 3. Iluminación de Linterna (Cono / Hotspot)
+                if self.salvage_flashlight {
+                    let flicker = ((t * 25.0).sin() * 2.0).abs();
+                    let spot_center = vanishing_pt;
+                    painter.circle_filled(spot_center, 180.0 + flicker, Color32::from_rgba_unmultiplied(255, 240, 190, 18));
+                    painter.circle_filled(spot_center, 115.0 + flicker, Color32::from_rgba_unmultiplied(255, 245, 200, 32));
+                    painter.circle_filled(spot_center, 65.0 + (flicker * 0.5), Color32::from_rgba_unmultiplied(255, 250, 210, 48));
+                } else {
+                    // Oscuridad densa si la linterna está apagada
+                    painter.rect_filled(rect, 6.0, Color32::from_rgba_unmultiplied(0, 0, 0, 220));
+                }
+
+                // 4. Renderizado del Animatrónico (oInteraction_Animatronic)
+                if self.salvage_jumpscare_triggered {
+                    // Jumpscare 3D con sacudida y zoom violento
+                    let cycle = (t % 1.0) / 1.0;
+                    let zoom = 0.85 + (cycle.powf(0.35) * 0.80);
+                    let sz = Vec2::new(320.0 * zoom, 320.0 * zoom);
+                    let j_shake_x = (t * 85.0).sin() * 9.0;
+                    let j_shake_y = (t * 60.0).cos() * 5.0;
+                    let c_pos = Pos2::new(rect.center().x + j_shake_x, rect.center().y + 10.0 + j_shake_y);
+                    let scare_rect = Rect::from_center_size(c_pos, sz);
+
+                    let scare_texture = if (t * 24.0) as u32 % 3 == 0 {
+                        j0_t.as_ref()
+                    } else if (t * 24.0) as u32 % 3 == 1 {
+                        j1_t.as_ref()
+                    } else {
+                        j2_t.as_ref().or(scare_t.as_ref())
+                    };
+
+                    if let Some(tex) = scare_texture {
+                        painter.image(tex.id(), scare_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    } else if let Some(head) = &head_t {
+                        painter.image(head.id(), scare_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::RED);
+                    } else {
+                        painter.rect_filled(scare_rect, 10.0, Color32::RED);
+                        painter.text(c_pos, egui::Align2::CENTER_CENTER, "¡JUMPSCARE!", egui::FontId::proportional(26.0), Color32::WHITE);
+                    }
+
+                    // Marco rojo parpadeante de peligro
+                    painter.rect_stroke(rect, 6.0, Stroke::new(4.0_f32, Color32::from_rgba_unmultiplied(255, 30, 30, 220)));
+                    painter.text(
+                        Pos2::new(rect.center().x, rect.min.y + 25.0),
+                        egui::Align2::CENTER_CENTER,
+                        "¡ANIMATRÓNICO HOSTIL! (Jumpscare 3D)",
+                        egui::FontId::proportional(15.0),
+                        Color32::from_rgb(255, 80, 80),
+                    );
+                } else if self.salvage_animatronic_encountered {
+                    let breathe = (t * 2.2).sin() * 3.0;
+                    let anim_center = Pos2::new(vanishing_pt.x, vanishing_pt.y + 15.0 + breathe);
+
+                    if self.salvage_flashlight {
+                        // Con linterna: Sujeto visible en perspectiva
+                        let b_sz = Vec2::new(130.0, 95.0);
+                        let h_sz = Vec2::new(95.0, 90.0);
+
+                        if let Some(tex) = &body_t {
+                            let b_rect = Rect::from_center_size(Pos2::new(anim_center.x, anim_center.y + 35.0), b_sz);
+                            painter.image(tex.id(), b_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                        }
+                        if let Some(tex) = &head_t {
+                            let h_rect = Rect::from_center_size(anim_center, h_sz);
+                            painter.image(tex.id(), h_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                        }
+
+                        // Etiqueta del animatrónico
+                        painter.text(
+                            Pos2::new(anim_center.x, anim_center.y - 58.0),
+                            egui::Align2::CENTER_CENTER,
+                            format!("oInteraction_Animatronic [{}]", self.project.internal_id),
+                            egui::FontId::proportional(11.5),
+                            Color32::YELLOW,
+                        );
+                    } else {
+                        // Sin linterna: Ojos brillantes acechando en la penumbra
+                        painter.circle_filled(Pos2::new(anim_center.x - 14.0, anim_center.y - 6.0), 4.5, Color32::from_rgb(90, 255, 130));
+                        painter.circle_filled(Pos2::new(anim_center.x + 14.0, anim_center.y - 6.0), 4.5, Color32::from_rgb(90, 255, 130));
+                        painter.text(
+                            Pos2::new(rect.center().x, rect.max.y - 30.0),
+                            egui::Align2::CENTER_CENTER,
+                            "(Sujeto acechando en la oscuridad — Enciende la linterna para inspeccionar)",
+                            egui::FontId::proportional(12.0),
+                            Color32::from_gray(160),
+                        );
+                    }
+                }
+
+                // Clic en el viewport para interactuar
+                if resp.clicked() && !self.salvage_jumpscare_triggered {
+                    self.salvage_flashlight = !self.salvage_flashlight;
+                }
             });
         } else {
             // ==============================================================
             // MODO PLANO TÉCNICO CENITAL & CATÁLOGO DE ENTIDADES 3D
             // ==============================================================
             ui.columns(2, |cols| {
-                // Columna Izquierda: Paleta de Objetos (Drag & Drop)
-                cols[0].heading(format!("{}  Catálogo de Entidades 3D & Props", ic::TOOLBOX));
-                cols[0].label("Haz clic para añadir objetos interactivos al laberinto (basado en Room 12-16):");
+                cols[0].heading(format!("{}  Catálogo de Entidades 3D & Props", ic::PACKAGE));
+                cols[0].label("Haz clic para añadir objetos interactivos al laberinto de salvamento de Frickbear's 3:");
                 cols[0].add_space(8.0);
 
                 // Selector de Sala Destino
                 cols[0].horizontal(|ui| {
                     ui.label(RichText::new("Sala Destino:").strong());
-                    let rooms = [
-                        "MinigameMaze_1",
-                        "MinigameMaze_2",
-                        "MinigameMaze_3",
-                        "MinigameMaze_4",
-                        "MinigameMaze_5",
-                        "Room 18: SalvageResults (Sala de Salvamento)",
-                        "Room 8: SalvageEnding (Final de Salvamento)",
-                        "MinigameMaze_Vents",
-                        "Fredbear_3DMaze",
-                    ];
-                    egui::ComboBox::from_label("")
+                    egui::ComboBox::from_id_source("maze_room_select")
                         .selected_text(&self.project.advanced.target_maze_room)
                         .show_ui(ui, |ui| {
-                            for rm in rooms {
-                                ui.selectable_value(&mut self.project.advanced.target_maze_room, rm.to_string(), rm);
-                            }
+                            ui.selectable_value(&mut self.project.advanced.target_maze_room, "MinigameMaze_1".to_string(), "MinigameMaze_1 (FNAF 1 - Freddy's 1993)");
+                            ui.selectable_value(&mut self.project.advanced.target_maze_room, "MinigameMaze_2".to_string(), "MinigameMaze_2 (FNAF 2 - New & Improved)");
+                            ui.selectable_value(&mut self.project.advanced.target_maze_room, "MinigameMaze_3".to_string(), "MinigameMaze_3 (FNAF 3 - Fazbear's Fright)");
+                            ui.selectable_value(&mut self.project.advanced.target_maze_room, "MinigameMaze_4".to_string(), "MinigameMaze_4 (William's Woods & Midnight)");
+                            ui.selectable_value(&mut self.project.advanced.target_maze_room, "MinigameMaze_5".to_string(), "MinigameMaze_5 (Sister Location & Shafts)");
                         });
                 });
 
-                cols[0].add_space(8.0);
+                cols[0].add_space(10.0);
 
-                egui::ScrollArea::vertical().id_salt("prop_palette_scroll").max_height(280.0).show(&mut cols[0], |ui| {
-                    let props = [
-                        (MazePropType::AnimatronicSpawn, "Punto de Interacción / Susto (Animatronic)", ic::GHOST),
-                        (MazePropType::Hatchet, "Hacha (Interactuable en Suelo)", ic::SWORD),
-                        (MazePropType::GiftBox, "Caja de Regalo (Prop)", ic::GIFT),
-                        (MazePropType::Poster, "Póster de Pared", ic::IMAGE),
-                        (MazePropType::ArcadeCabinet, "Máquina Arcade", ic::GAME_CONTROLLER),
-                        (MazePropType::EscapeDoor, "Puerta de Escape / Salida", ic::DOOR_OPEN),
-                        (MazePropType::SalvageChair, "Silla de Salvamento / Inspección (Room 18)", ic::SHIELD),
-                        (MazePropType::SalvageCassette, "Grabadora de Cassette (Audio Prompt)", ic::SPEAKER_HIGH),
-                        (MazePropType::SalvageShock, "Taser de Electrochoque (3 usos)", ic::LIGHTNING),
-                    ];
+                let prop_types = [
+                    (MazePropType::AnimatronicSpawn, "Punto de Encuentro / Salvamento (Animatronic)", ic::GHOST),
+                    (MazePropType::Hatchet, "Hacha (Interactuable en Suelo)", ic::SWORD),
+                    (MazePropType::GiftBox, "Caja de Regalo (Tokens / Scrap)", ic::GIFT),
+                    (MazePropType::Poster, "Póster de Pared / Memo", ic::IMAGE),
+                    (MazePropType::ArcadeCabinet, "Máquina Arcade (Placa Minijuego)", ic::GAME_CONTROLLER),
+                    (MazePropType::EscapeDoor, "Puerta de Salida / Escape", ic::DOOR_OPEN),
+                    (MazePropType::VentDuct, "Conducto de Ventilación", ic::WIND),
+                    (MazePropType::PuppetBox, "Caja Musical de Puppet", ic::MUSIC_NOTES),
+                    (MazePropType::PiratesCove, "Cortina Pirate Cove", ic::MASK_HAPPY),
+                    (MazePropType::ControlModule, "Módulo de Control Circus", ic::DESKTOP),
+                ];
 
-                    for (prop_type, desc, icon) in props.iter() {
-                        egui::Frame::group(ui.style())
-                            .fill(Color32::from_rgb(28, 31, 38))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_gray(100)))
-                            .inner_margin(8.0)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(*icon).size(18.0).color(Color32::from_rgb(200, 150, 50)));
-                                    ui.label(RichText::new(*desc).strong());
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.button(format!("{} Añadir al Mapa", ic::PLUS)).clicked() {
-                                            let offset = (self.project.advanced.maze_entities.len() * 24) as i32;
-                                            self.project.advanced.maze_entities.push(EnvironmentEntity {
-                                                prop_type: prop_type.clone(),
-                                                x: 320 + (offset % 120),
-                                                y: 180 + (offset % 80),
-                                                scale_x: 1.0,
-                                                scale_y: 1.0,
-                                            });
-                                        }
-                                    });
+                for (ptype, label, icon) in prop_types {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(26, 29, 36))
+                        .rounding(Rounding::same(4.0))
+                        .inner_margin(6.0)
+                        .show(&mut cols[0], |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{} {}", icon, label)).size(12.5));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("+ Añadir al Mapa").clicked() {
+                                        let count = self.project.advanced.maze_entities.len();
+                                        let offset = (count as i32 * 25) % 200;
+                                        self.project.advanced.maze_entities.push(EnvironmentEntity {
+                                            prop_type: ptype.clone(),
+                                            x: 100 + offset,
+                                            y: 80 + offset,
+                                            scale_x: 1.0,
+                                            scale_y: 1.0,
+                                        });
+                                    }
                                 });
                             });
-                        ui.add_space(6.0);
-                    }
-                });
-
-                cols[0].add_space(6.0);
-                if self.project.advanced.target_maze_room.contains("Salvage") {
-                    if cols[0].button(RichText::new(format!("{} Auto-configurar Setup Room 18", ic::LIGHTNING)).strong().color(Color32::from_rgb(255, 200, 80))).clicked() {
-                        self.project.advanced.maze_entities.clear();
-                        self.project.advanced.maze_entities.push(EnvironmentEntity {
-                            prop_type: MazePropType::SalvageChair,
-                            x: 320,
-                            y: 110,
-                            scale_x: 1.0,
-                            scale_y: 1.0,
                         });
-                        self.project.advanced.maze_entities.push(EnvironmentEntity {
-                            prop_type: MazePropType::AnimatronicSpawn,
-                            x: 320,
-                            y: 80,
-                            scale_x: 1.0,
-                            scale_y: 1.0,
-                        });
-                        self.project.advanced.maze_entities.push(EnvironmentEntity {
-                            prop_type: MazePropType::SalvageCassette,
-                            x: 160,
-                            y: 280,
-                            scale_x: 1.0,
-                            scale_y: 1.0,
-                        });
-                        self.project.advanced.maze_entities.push(EnvironmentEntity {
-                            prop_type: MazePropType::SalvageShock,
-                            x: 480,
-                            y: 280,
-                            scale_x: 1.0,
-                            scale_y: 1.0,
-                        });
-                    }
                     cols[0].add_space(4.0);
                 }
+
+                cols[0].add_space(10.0);
                 cols[0].horizontal(|ui| {
-                    ui.label(RichText::new(format!("Entidades colocadas: {}", self.project.advanced.maze_entities.len())).strong());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(format!("{} Limpiar Todo", ic::TRASH)).clicked() {
-                            self.project.advanced.maze_entities.clear();
-                        }
-                    });
+                    ui.label(format!("Entidades colocadas: {}", self.project.advanced.maze_entities.len()));
+                    if ui.button(format!("{} Limpiar Todo", ic::TRASH)).clicked() {
+                        self.project.advanced.maze_entities.clear();
+                    }
                 });
 
-                // Columna Derecha: Lienzo 2D Cenital Interactivo (Cálculo de Coordenadas In-Game)
-                cols[1].heading(format!("{}  Plano Cenital del Entorno", ic::MAP_TRIFOLD));
+                // ==============================================================
+                // PLANO CENITAL Y COORDENADAS (CANVAS 2D)
+                // ==============================================================
+                cols[1].heading(format!("{}  Plano Cenital del Entorno", ic::COMPASS));
                 cols[1].label("Arrastra las entidades con el ratón. Clic derecho sobre una entidad para eliminarla:");
-                cols[1].add_space(8.0);
+                cols[1].add_space(6.0);
 
-                let (rect, _resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::click_and_drag());
+                let (rect, _resp) = cols[1].allocate_exact_size(Vec2::new(540.0, 360.0), Sense::hover());
                 let painter = cols[1].painter_at(rect);
 
-                // Fondo simulando el plano técnico (Grid)
-                painter.rect_filled(rect, 4.0, Color32::from_rgb(15, 20, 25));
-                for i in 0..17 {
-                    let offset_x = i as f32 * 32.0;
-                    painter.line_segment(
-                        [Pos2::new(rect.min.x + offset_x, rect.min.y), Pos2::new(rect.min.x + offset_x, rect.max.y)],
-                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
-                    );
+                // Fondo y cuadrícula
+                painter.rect_filled(rect, 4.0, Color32::from_rgb(15, 17, 22));
+                painter.rect_stroke(rect, 4.0, Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 65)));
+
+                for gx in (0..=540).step_by(27) {
+                    let x = rect.min.x + gx as f32;
+                    painter.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], Stroke::new(0.5_f32, Color32::from_rgb(25, 30, 40)));
                 }
-                for i in 0..12 {
-                    let offset_y = i as f32 * 32.0;
-                    painter.line_segment(
-                        [Pos2::new(rect.min.x, rect.min.y + offset_y), Pos2::new(rect.max.x, rect.min.y + offset_y)],
-                        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)),
-                    );
-                }
-                painter.rect_stroke(rect, 4.0, Stroke::new(2.0_f32, Color32::GRAY));
-
-                let is_salvage = self.project.advanced.target_maze_room.contains("Salvage");
-                if is_salvage {
-                    // Haz de luz cenital (Spotlight de la sala de salvamento)
-                    painter.circle_filled(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Color32::from_rgba_unmultiplied(255, 235, 180, 20));
-                    painter.circle_stroke(Pos2::new(rect.center().x, rect.min.y + 110.0), 105.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 180, 45)));
-
-                    // Zona del Sujeto / Silla de Inspección
-                    let chair_box = Rect::from_center_size(Pos2::new(rect.center().x, rect.min.y + 110.0), Vec2::new(140.0, 95.0));
-                    painter.rect_filled(chair_box, 4.0, Color32::from_rgba_unmultiplied(70, 35, 20, 140));
-                    painter.rect_stroke(chair_box, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(200, 130, 70)));
-                    painter.text(Pos2::new(chair_box.center().x, chair_box.min.y + 16.0), egui::Align2::CENTER_CENTER, "ZONA SUJETO DE PRUEBA", egui::FontId::proportional(11.0), Color32::from_rgb(255, 180, 100));
-
-                    // Mesa de Documentación / Taser / Cassette (Primer Plano)
-                    let table_rect = Rect::from_min_max(Pos2::new(rect.min.x + 30.0, rect.min.y + 230.0), Pos2::new(rect.max.x - 30.0, rect.max.y - 15.0));
-                    painter.rect_filled(table_rect, 6.0, Color32::from_rgba_unmultiplied(40, 25, 15, 220));
-                    painter.rect_stroke(table_rect, 6.0, Stroke::new(2.0_f32, Color32::from_rgb(110, 75, 45)));
-                    painter.text(table_rect.center(), egui::Align2::CENTER_CENTER, "MESA DE TRABAJO (Grabadora / Taser / Hoja de Salvamento)", egui::FontId::proportional(11.0), Color32::from_rgb(190, 160, 130));
-
-                    // Indicador HUD de Tensión & Shocks
-                    let hud_rect = Rect::from_min_max(Pos2::new(rect.min.x + 10.0, rect.min.y + 8.0), Pos2::new(rect.max.x - 10.0, rect.min.y + 30.0));
-                    painter.rect_filled(hud_rect, 3.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
-                    painter.rect_stroke(hud_rect, 3.0, Stroke::new(1.0_f32, Color32::from_rgb(100, 100, 100)));
-                    painter.text(
-                        hud_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "ROOM 18: SALVAGE RESULTS — Tensión: 0% / 100% | Shocks: 3 | Valor: $500",
-                        egui::FontId::proportional(11.5),
-                        Color32::from_rgb(255, 215, 0),
-                    );
+                for gy in (0..=360).step_by(24) {
+                    let y = rect.min.y + gy as f32;
+                    painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], Stroke::new(0.5_f32, Color32::from_rgb(25, 30, 40)));
                 }
 
                 let mut to_delete = None;
@@ -2625,20 +2602,23 @@ impl FrickEditorApp {
                         MazePropType::Poster => ic::IMAGE,
                         MazePropType::ArcadeCabinet => ic::GAME_CONTROLLER,
                         MazePropType::EscapeDoor => ic::DOOR_OPEN,
-                        MazePropType::SalvageChair => ic::SHIELD,
-                        MazePropType::SalvageCassette => ic::SPEAKER_HIGH,
-                        MazePropType::SalvageShock => ic::LIGHTNING,
+                        MazePropType::VentDuct => ic::WIND,
+                        MazePropType::PuppetBox => ic::MUSIC_NOTES,
+                        MazePropType::PiratesCove => ic::MASK_HAPPY,
+                        MazePropType::ControlModule => ic::DESKTOP,
                     };
 
                     let color = match entity.prop_type {
                         MazePropType::AnimatronicSpawn => Color32::RED,
                         MazePropType::Hatchet => Color32::LIGHT_GRAY,
                         MazePropType::GiftBox => Color32::from_rgb(230, 180, 40),
+                        MazePropType::Poster => Color32::from_rgb(70, 160, 240),
+                        MazePropType::ArcadeCabinet => Color32::from_rgb(180, 80, 220),
                         MazePropType::EscapeDoor => Color32::from_rgb(60, 200, 80),
-                        MazePropType::SalvageChair => Color32::from_rgb(180, 100, 50),
-                        MazePropType::SalvageCassette => Color32::from_rgb(70, 150, 230),
-                        MazePropType::SalvageShock => Color32::from_rgb(240, 200, 40),
-                        _ => Color32::from_rgb(100, 180, 255),
+                        MazePropType::VentDuct => Color32::from_rgb(100, 160, 210),
+                        MazePropType::PuppetBox => Color32::from_rgb(210, 50, 70),
+                        MazePropType::PiratesCove => Color32::from_rgb(160, 40, 50),
+                        MazePropType::ControlModule => Color32::from_rgb(50, 140, 230),
                     };
 
                     painter.rect_filled(entity_rect, 4.0, Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 190));
@@ -2683,4 +2663,5 @@ impl FrickEditorApp {
             });
         }
     }
+
 }

@@ -327,18 +327,71 @@ pub struct CameraRouteNode {
     pub transition_time_modifier: f32, // Multiplicador de velocidad para llegar a esta cámara
 }
 
+/// Locaciones Oficiales de Salvamento de Five Nights at Frickbear's 3
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SalvageLocationIndex {
+    Location1Fnaf1,       // MinigameMaze_1 (Freddy Fazbear's Pizza 1993 - BSO: Cadbury)
+    Location2Fnaf2,       // MinigameMaze_2 (New & Improved Freddy's 1987 - BSO: Lion Heart)
+    Location3Fnaf3,       // MinigameMaze_3 (Fazbear's Fright & Conductos - BSO: Hebe in the Cold Area)
+    Location4WilliamWoods,// MinigameMaze_4 (William's Woods & Casa de Midnight Motorist - BSO: Stage 2)
+    Location5SisterLocation, // MinigameMaze_5 (Sister Location & Shafts - BSO: Gremlins 2 NES)
+}
+
+impl SalvageLocationIndex {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Location1Fnaf1 => "Locación 1: FNAF 1 (Freddy's 1993)",
+            Self::Location2Fnaf2 => "Locación 2: FNAF 2 (New & Improved 1987)",
+            Self::Location3Fnaf3 => "Locación 3: FNAF 3 (Fazbear's Fright)",
+            Self::Location4WilliamWoods => "Locación 4: William's Woods (Bosque & Casa)",
+            Self::Location5SisterLocation => "Locación 5: Sister Location (Subterráneo)",
+        }
+    }
+
+    pub fn room_name(&self) -> &'static str {
+        match self {
+            Self::Location1Fnaf1 => "MinigameMaze_1",
+            Self::Location2Fnaf2 => "MinigameMaze_2",
+            Self::Location3Fnaf3 => "MinigameMaze_3",
+            Self::Location4WilliamWoods => "MinigameMaze_4",
+            Self::Location5SisterLocation => "MinigameMaze_5",
+        }
+    }
+
+    pub fn soundtrack_name(&self) -> &'static str {
+        match self {
+            Self::Location1Fnaf1 => "Cadbury",
+            Self::Location2Fnaf2 => "Lion Heart",
+            Self::Location3Fnaf3 => "Hebe in the Cold Area",
+            Self::Location4WilliamWoods => "Stage 2 (The Woods)",
+            Self::Location5SisterLocation => "Ventilation Shaft (Gremlins 2 NES)",
+        }
+    }
+
+    pub fn all() -> &'static [SalvageLocationIndex] {
+        &[
+            Self::Location1Fnaf1,
+            Self::Location2Fnaf2,
+            Self::Location3Fnaf3,
+            Self::Location4WilliamWoods,
+            Self::Location5SisterLocation,
+        ]
+    }
+}
+
 /// Objetos interactivos arrastrables en el Explorador 3D de Laberintos/Salvamento
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MazePropType {
-    AnimatronicSpawn,   // oInteraction_Animatronic
-    Hatchet,            // oMazeFloorDecoration_Hatchet
-    GiftBox,            // oMazeProp_GiftBox
-    Poster,             // oMazeSign_Poster
-    ArcadeCabinet,      // oMazeProp_ArcadeCabinet
-    EscapeDoor,         // oInteraction_Escape
-    SalvageChair,       // oSalvage_Chair (Silla de Inspección / Salvamento)
-    SalvageCassette,    // oSalvage_Cassette (Reproductor de audio de prueba)
-    SalvageShock,       // oSalvage_Taser (Botón de electrochoque)
+    AnimatronicSpawn,   // oInteraction_Animatronic (Punto de Encuentro / Salvamento)
+    Hatchet,            // oMazeFloorDecoration_Hatchet (Hacha en el suelo)
+    GiftBox,            // oMazeProp_GiftBox (Caja de Regalo / Tokens)
+    Poster,             // oMazeSign_Poster (Póster / Memo)
+    ArcadeCabinet,      // oMazeProp_ArcadeCabinet (Placa arcade minijuego)
+    EscapeDoor,         // oInteraction_Escape (Puerta de Salida)
+    VentDuct,           // oMazeVent (Conducto de ventilación)
+    PuppetBox,          // oMazeProp_PuppetBox (Caja de Puppet)
+    PiratesCove,        // oMazeProp_PiratesCove (Cortinas Pirate Cove)
+    ControlModule,      // oMazeProp_ControlModule (Módulo de control Circus)
 }
 
 impl MazePropType {
@@ -350,9 +403,10 @@ impl MazePropType {
             Self::Poster => "oMazeSign_Poster",
             Self::ArcadeCabinet => "oMazeProp_ArcadeCabinet",
             Self::EscapeDoor => "oInteraction_Escape",
-            Self::SalvageChair => "oSalvageHead",
-            Self::SalvageCassette => "oSalvageOpener_Salvage",
-            Self::SalvageShock => "oSalvageSheet",
+            Self::VentDuct => "oMazeVent",
+            Self::PuppetBox => "oMazeProp_PuppetBox",
+            Self::PiratesCove => "oMazeProp_PiratesCove",
+            Self::ControlModule => "oMazeProp_ControlModule",
         }
     }
 }
