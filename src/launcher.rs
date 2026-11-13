@@ -237,4 +237,103 @@ impl GameLauncher {
             ))
         }
     }
+
+    /// Abre UndertaleModTool directamente cargando el archivo data.win del juego
+    pub fn open_undertale_mod_tool(utmt_scripts_dir: &Path, game_dir: &Path) -> Result<String, String> {
+        let utmt_exe = Self::find_utmt_executable(utmt_scripts_dir)
+            .ok_or_else(|| "No se encontró UndertaleModTool.exe en las rutas configuradas (ej. D:\\UndertaleModTool_v0.9.2.0-Windows-SingleFile\\UndertaleModTool.exe)".to_string())?;
+
+        let data_win_path = game_dir.join("data.win");
+        if !data_win_path.exists() {
+            return Err(format!("No se encontró 'data.win' en el directorio del juego: {}", game_dir.display()));
+        }
+
+        let mut cmd = Command::new(&utmt_exe);
+        if let Some(parent) = utmt_exe.parent() {
+            cmd.current_dir(parent);
+        }
+        cmd.arg(&data_win_path);
+
+        match cmd.spawn() {
+            Ok(_) => Ok(format!("UndertaleModTool ejecutado con: {}", data_win_path.display())),
+            Err(e) => Err(format!("Error iniciando UndertaleModTool: {}", e)),
+        }
+    }
+
+    /// Abre el directorio de scripts de UTMT en el explorador de archivos
+    pub fn open_utmt_scripts_folder(utmt_scripts_dir: &Path) -> Result<(), String> {
+        if !utmt_scripts_dir.exists() {
+            let _ = std::fs::create_dir_all(utmt_scripts_dir);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("explorer")
+                .arg(utmt_scripts_dir)
+                .spawn()
+                .map_err(|e| format!("Error abriendo carpeta de scripts: {}", e))?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Command::new("xdg-open")
+                .arg(utmt_scripts_dir)
+                .spawn()
+                .map_err(|e| format!("Error abriendo carpeta: {}", e))?;
+            Ok(())
+        }
+    }
+
+    /// Abre el directorio de instalación del juego en el explorador de archivos
+    pub fn open_game_folder(game_dir: &Path) -> Result<(), String> {
+        if !game_dir.exists() {
+            return Err(format!("No existe el directorio del juego: {}", game_dir.display()));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("explorer")
+                .arg(game_dir)
+                .spawn()
+                .map_err(|e| format!("Error abriendo carpeta del juego: {}", e))?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Command::new("xdg-open")
+                .arg(game_dir)
+                .spawn()
+                .map_err(|e| format!("Error abriendo carpeta: {}", e))?;
+            Ok(())
+        }
+    }
+
+    /// Abre la nota de auditoría técnica en el editor predeterminado (o Notepad en Windows)
+    pub fn open_audit_note(workspace_dir: &Path) -> Result<(), String> {
+        let candidates = [
+            workspace_dir.join("FrickEditor_GitHub_Repository").join("docs").join("AUDITORIA_MODIFICACIONES_GAME.md"),
+            workspace_dir.join("docs").join("AUDITORIA_MODIFICACIONES_GAME.md"),
+            workspace_dir.join("AUDITORIA_MODIFICACIONES_GAME.md"),
+        ];
+
+        for p in candidates {
+            if p.exists() {
+                #[cfg(target_os = "windows")]
+                {
+                    Command::new("notepad.exe")
+                        .arg(&p)
+                        .spawn()
+                        .map_err(|e| format!("Error abriendo nota de auditoría: {}", e))?;
+                    return Ok(());
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Command::new("xdg-open")
+                        .arg(&p)
+                        .spawn()
+                        .map_err(|e| format!("Error abriendo nota de auditoría: {}", e))?;
+                    return Ok(());
+                }
+            }
+        }
+        Err("No se encontró el archivo AUDITORIA_MODIFICACIONES_GAME.md".to_string())
+    }
 }

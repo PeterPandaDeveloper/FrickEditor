@@ -328,6 +328,31 @@ impl eframe::App for FrickEditorApp {
                     self.handle_one_click_play();
                 }
 
+                ui.add_space(6.0);
+                let utmt_header_btn = egui::Button::new(
+                    RichText::new(format!("{}  Abrir UTMT", ic::CODE))
+                        .size(13.0)
+                        .strong()
+                        .color(Color32::from_rgb(220, 235, 255)),
+                )
+                .fill(Color32::from_rgb(45, 65, 95))
+                .min_size(Vec2::new(120.0, 28.0));
+
+                if ui.add(utmt_header_btn).on_hover_text("Abrir UndertaleModTool directamente cargando data.win").clicked() {
+                    match GameLauncher::open_undertale_mod_tool(&self.project.utmt_scripts_dir, &self.project.game_dir) {
+                        Ok(msg) => {
+                            self.status_is_error = false;
+                            self.status_message = msg;
+                            self.show_toast(format!("{} UTMT iniciado con data.win", ic::CHECK_CIRCLE), false);
+                        }
+                        Err(err) => {
+                            self.status_is_error = true;
+                            self.status_message = err.clone();
+                            self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
+                        }
+                    }
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(format!("{}  Guardar JSON", ic::FLOPPY_DISK)).clicked() {
                         if let Some(path) = rfd::FileDialog::new()
@@ -958,6 +983,134 @@ impl FrickEditorApp {
             self.status_is_error = false;
             self.status_message = format!("Mod '{}' retirado de la lista.", rem_id);
         }
+
+        // 5. INTEGRACIÓN DIRECTA CON UNDERTALE MOD TOOL (UTMT)
+        ui.add_space(12.0);
+        egui::Frame::group(ui.style())
+            .fill(Color32::from_rgb(22, 28, 38))
+            .stroke(Stroke::new(1.2_f32, Color32::from_rgb(55, 80, 120)))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(14.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(ic::CODE).size(26.0).color(Color32::from_rgb(100, 180, 255)));
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("INTEGRACIÓN DIRECTA CON UNDERTALE MOD TOOL (UTMT)")
+                                .size(15.0)
+                                .strong()
+                                .color(Color32::from_rgb(220, 235, 255)),
+                        );
+                        ui.label(
+                            RichText::new("Abre UTMT con data.win ya precargado, explora los scripts CSX o accede directamente a los binarios del juego para auditoría e inyección manual.")
+                                .size(11.5)
+                                .color(Color32::from_gray(170)),
+                        );
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_utmt = egui::Button::new(
+                            RichText::new(format!("{}  Abrir UTMT con data.win", ic::CODE))
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgb(35, 75, 135))
+                        .min_size(Vec2::new(180.0, 32.0));
+
+                        if ui.add(btn_utmt).clicked() {
+                            match GameLauncher::open_undertale_mod_tool(&self.project.utmt_scripts_dir, &self.project.game_dir) {
+                                Ok(msg) => {
+                                    self.status_is_error = false;
+                                    self.status_message = msg;
+                                    self.show_toast(format!("{} UndertaleModTool ejecutado correctamente.", ic::CHECK_CIRCLE), false);
+                                }
+                                Err(err) => {
+                                    self.status_is_error = true;
+                                    self.status_message = err.clone();
+                                    self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
+                                }
+                            }
+                        }
+
+                        if ui.button(format!("{}  Carpeta Scripts CSX", ic::FOLDER_OPEN)).clicked() {
+                            if let Err(e) = GameLauncher::open_utmt_scripts_folder(&self.project.utmt_scripts_dir) {
+                                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, e), true);
+                            }
+                        }
+
+                        if ui.button(format!("{}  Carpeta del Juego", ic::FOLDER_OPEN)).clicked() {
+                            if let Err(e) = GameLauncher::open_game_folder(&self.project.game_dir) {
+                                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, e), true);
+                            }
+                        }
+                    });
+                });
+            });
+
+        // 6. NOTA TÉCNICA DE MODIFICACIONES Y AUDITORÍA DE DATA.WIN
+        ui.add_space(8.0);
+        egui::Frame::group(ui.style())
+            .fill(Color32::from_rgb(24, 25, 32))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 65, 80)))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(14.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(ic::SHIELD_CHECK).size(24.0).color(Color32::from_rgb(75, 210, 140)));
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("NOTA TÉCNICA: ESTADO DE MODIFICACIONES EN DATA.WIN")
+                            .size(14.5)
+                            .strong()
+                            .color(Color32::WHITE),
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let doc_btn = egui::Button::new(
+                            RichText::new(format!("{}  Ver Auditoría Completa (.md)", ic::ARROW_SQUARE_OUT))
+                                .strong()
+                                .color(Color32::from_rgb(180, 225, 255)),
+                        )
+                        .fill(Color32::from_rgb(35, 50, 70));
+
+                        if ui.add(doc_btn).on_hover_text("Abrir AUDITORIA_MODIFICACIONES_GAME.md en el editor").clicked() {
+                            if let Err(e) = GameLauncher::open_audit_note(&self.project.workspace_dir) {
+                                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, e), true);
+                            }
+                        }
+                    });
+                });
+
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                egui::Grid::new("audit_summary_grid")
+                    .num_columns(2)
+                    .spacing([14.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Estado de data.win:").strong().color(Color32::from_rgb(130, 200, 255)));
+                        ui.label(RichText::new("INTACTO / ORIGINAL (26/10/2026 13:22) — Los scripts operan como inyecciones controladas.").color(Color32::from_gray(200)));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Phantoms & Marionette:").strong().color(Color32::from_rgb(80, 220, 130)));
+                        ui.label(RichText::new("NO AFECTADOS POR MODS. oMarionette (ID 100038) y oPhantoms (ID 100060) son nativos de la Sala 3 (Office).").color(Color32::from_gray(200)));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Four Layers Down:").strong().color(Color32::from_rgb(255, 210, 100)));
+                        ui.label(RichText::new("Modo Endless 100% nativo. 'The Phantoms' en la tienda/selector incrementa AmountOfPhantoms y Aggro.").color(Color32::from_gray(200)));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Objetos Murray Añadidos:").strong().color(Color32::from_rgb(245, 150, 60)));
+                        ui.label(RichText::new("oMurray_BackWindow (persianas independientes), oMurray_CustomNightTile (scroll TreeY), oMurray_DeathScreen.").color(Color32::from_gray(200)));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Invariantes de Seguridad:").strong().color(Color32::from_rgb(210, 160, 255)));
+                        ui.label(RichText::new("Variables inicializadas en línea 1 de Create_0, compatibilidad total con póster de Sun, sin sobrescritura de scripts.").color(Color32::from_gray(200)));
+                        ui.end_row();
+                    });
+            });
     }
 
     // --------------------------------------------------------------
