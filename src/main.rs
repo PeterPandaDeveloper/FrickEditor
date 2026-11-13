@@ -92,6 +92,12 @@ struct FrickEditorApp {
     maze_player_x: f32,
     maze_player_y: f32,
     maze_player_yaw: f32,
+    // Usabilidad, Ergonomía y UI
+    toast_message: Option<(String, bool, f32)>,
+    noclip_mode: bool,
+    move_speed_multiplier: f32,
+    radar_display_mode: usize,
+    show_crosshair: bool,
     // Debugger y Filtros de Entidades en Plano 2D
     dbg_filter_walls: bool,
     dbg_filter_props: bool,
@@ -160,6 +166,11 @@ impl FrickEditorApp {
             maze_player_x: 960.0,
             maze_player_y: 224.0,
             maze_player_yaw: 180.0,
+            toast_message: None,
+            noclip_mode: false,
+            move_speed_multiplier: 1.0,
+            radar_display_mode: 0,
+            show_crosshair: true,
             dbg_filter_walls: true,
             dbg_filter_props: true,
             dbg_filter_interactive: true,
@@ -254,6 +265,41 @@ impl eframe::App for FrickEditorApp {
             self.sim_time += dt;
         }
         ctx.request_repaint();
+
+        // Actualizar temporizador de Toast flotante
+        if let Some((_, _, ref mut time)) = self.toast_message {
+            *time -= dt;
+            if *time <= 0.0 {
+                self.toast_message = None;
+            }
+        }
+
+        // Atajos de Teclado Globales (Ergonomía & Comodidad)
+        ctx.input(|i| {
+            // Ctrl+S: Guardar Proyecto Rápido
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::S) {
+                let save_path = self.project.workspace_dir.join(format!("{}_project.json", self.project.internal_id.to_lowercase()));
+                if let Ok(json) = serde_json::to_string_pretty(&self.project) {
+                    if std::fs::write(&save_path, json).is_ok() {
+                        self.show_toast(format!("Proyecto guardado en {}", save_path.file_name().unwrap_or_default().to_string_lossy()), false);
+                    }
+                }
+            }
+            // F5: PLAY (Inyectar y Jugar)
+            if i.key_pressed(egui::Key::F5) {
+                self.handle_one_click_play();
+            }
+            // Alt + 0..6: Cambiar de Pestaña Rápido
+            if i.modifiers.alt {
+                if i.key_pressed(egui::Key::Num0) { self.active_tab = ActiveTab::ModManager; }
+                if i.key_pressed(egui::Key::Num1) { self.active_tab = ActiveTab::Gallery; }
+                if i.key_pressed(egui::Key::Num2) { self.active_tab = ActiveTab::SpritesAndGuide; }
+                if i.key_pressed(egui::Key::Num3) { self.active_tab = ActiveTab::LiveAnimationPreview; }
+                if i.key_pressed(egui::Key::Num4) { self.active_tab = ActiveTab::GridAndMechanics; }
+                if i.key_pressed(egui::Key::Num5) { self.active_tab = ActiveTab::CameraMapRouter; }
+                if i.key_pressed(egui::Key::Num6) { self.active_tab = ActiveTab::Environment3DBuilder; }
+            }
+        });
 
         // ==========================================================
         // BARRA SUPERIOR
@@ -540,6 +586,41 @@ impl eframe::App for FrickEditorApp {
                 ActiveTab::Environment3DBuilder => self.ui_environment_3d_builder_tab(ctx, ui),
             });
         });
+
+        // ==========================================================
+        // NOTIFICACIÓN TOAST FLOTANTE EN ESQUINA INFERIOR DERECHA
+        // ==========================================================
+        if let Some((msg, is_err, time)) = &self.toast_message {
+            let alpha = (*time / 0.5).min(1.0);
+            let bg = if *is_err {
+                Color32::from_rgba_unmultiplied(65, 18, 18, (235.0 * alpha) as u8)
+            } else {
+                Color32::from_rgba_unmultiplied(18, 48, 28, (235.0 * alpha) as u8)
+            };
+            let border = if *is_err {
+                Color32::from_rgba_unmultiplied(240, 70, 70, (250.0 * alpha) as u8)
+            } else {
+                Color32::from_rgba_unmultiplied(60, 225, 110, (250.0 * alpha) as u8)
+            };
+            let icon = if *is_err { ic::WARNING_CIRCLE } else { ic::CHECK_CIRCLE };
+
+            egui::Area::new(egui::Id::new("floating_toast_notification_area"))
+                .fixed_pos(Pos2::new(ctx.screen_rect().max.x - 380.0, ctx.screen_rect().max.y - 85.0))
+                .order(egui::Order::Tooltip)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(bg)
+                        .stroke(Stroke::new(1.5_f32, border))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(10.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(icon).size(18.0).color(border));
+                                ui.label(RichText::new(msg).size(12.5).color(Color32::WHITE).strong());
+                            });
+                        });
+                });
+        }
     }
 }
 
@@ -1915,9 +1996,15 @@ impl FrickEditorApp {
             if ui.add(egui::TextEdit::singleline(&mut text).desired_width(150.0)).changed() {
                 *target = PathBuf::from(text);
             }
-            if ui.button(ic::FOLDER_OPEN).clicked() {
+            if ui.button(ic::FOLDER_OPEN).on_hover_text("Seleccionar carpeta").clicked() {
                 if let Some(p) = rfd::FileDialog::new().pick_folder() {
                     *target = p;
+                }
+            }
+            if ui.button(ic::ARROW_SQUARE_OUT).on_hover_text("Abrir en Explorador de Windows").clicked() {
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = std::process::Command::new("explorer").arg(&target).spawn();
                 }
             }
         });
@@ -2139,6 +2226,20 @@ impl FrickEditorApp {
 
     // --------------------------------------------------------------
     // PESTAÑA 6: VISOR & DEBUGGER DE LOCACIONES 3D (MINIGAMEMAZE 1 A 5)
+    fn show_toast(&mut self, message: impl Into<String>, is_error: bool) {
+        let msg = message.into();
+        self.status_message = msg.clone();
+        self.status_is_error = is_error;
+        self.toast_message = Some((msg, is_error, 3.5));
+    }
+
+    fn teleport_player(&mut self, x: f32, y: f32, yaw: f32, zone_title: &str) {
+        self.maze_player_x = x;
+        self.maze_player_y = y;
+        self.maze_player_yaw = yaw;
+        self.show_toast(format!("Teletransportado a: {}", zone_title), false);
+    }
+
     fn reset_maze_player_spawn(&mut self) {
         let (x, y, yaw) = match self.selected_salvage_location {
             SalvageLocationIndex::Location1Fnaf1 => (960.0, 224.0, 180.0),
@@ -2183,7 +2284,7 @@ impl FrickEditorApp {
                 self.salvage_tab_mode = SalvageTabMode::BlueprintEditor;
             }
 
-            ui.add_space(10.0);
+            ui.add_space(8.0);
             ui.separator();
             ui.add_space(6.0);
 
@@ -2193,17 +2294,18 @@ impl FrickEditorApp {
                 (format!("{} Pausar", ic::PAUSE), Color32::from_rgb(255, 180, 50))
             };
 
-            if ui.button(RichText::new(pause_txt).strong().color(pause_col)).clicked() {
+            if ui.button(RichText::new(pause_txt).strong().color(pause_col)).on_hover_text("Pausar / Reanudar la simulación 3D").clicked() {
                 self.salvage_sim_paused = !self.salvage_sim_paused;
             }
 
-            if ui.button(format!("{} Reiniciar al Spawn", ic::ARROW_COUNTER_CLOCKWISE)).clicked() {
+            if ui.button(format!("{} Reiniciar al Spawn", ic::ARROW_COUNTER_CLOCKWISE)).on_hover_text("Devolver jugador al spawn inicial de esta sala").clicked() {
                 self.reset_maze_player_spawn();
                 self.salvage_sim_paused = false;
+                self.show_toast("Jugador restablecido al Spawn inicial", false);
             }
 
             let light_col = if self.salvage_flashlight { Color32::from_rgb(255, 230, 90) } else { Color32::GRAY };
-            if ui.button(RichText::new(format!("{} Linterna", ic::FLASHLIGHT)).strong().color(light_col)).clicked() {
+            if ui.button(RichText::new(format!("{} Linterna", ic::FLASHLIGHT)).strong().color(light_col)).on_hover_text("Encender / Apagar la linterna [Espacio]").clicked() {
                 self.salvage_flashlight = !self.salvage_flashlight;
             }
 
@@ -2224,9 +2326,130 @@ impl FrickEditorApp {
                     self.selected_salvage_location = *loc;
                     self.project.salvage_placement.target_room = loc.room_name().to_string();
                     self.reset_maze_player_spawn();
+                    self.show_toast(format!("Cargando locación: {}", loc.display_name()), false);
                 }
             }
         });
+
+        ui.add_space(4.0);
+
+        // ==============================================================
+        // FILA DE COMODIDAD & USABILIDAD: PRESETS DE TELETRANSPORTE & CONTROLES
+        // ==============================================================
+        if self.salvage_tab_mode == SalvageTabMode::LiveSimulator {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("📍 Teletransporte:").strong().size(12.0).color(Color32::from_rgb(0, 215, 255)));
+
+                match self.selected_salvage_location {
+                    SalvageLocationIndex::Location1Fnaf1 => {
+                        if ui.button("🎭 Escenario").on_hover_text("Viajar al Show Stage (Freddy, Bonnie, Chica)").clicked() {
+                            self.teleport_player(960.0, 224.0, 180.0, "Escenario Principal");
+                        }
+                        if ui.button("🍕 Comedor").on_hover_text("Viajar al Salón de Comedor y Mesas").clicked() {
+                            self.teleport_player(720.0, 480.0, 180.0, "Salón de Comedor");
+                        }
+                        if ui.button("🦊 Pirate Cove").on_hover_text("Viajar a la Guarida del Pirata (Foxy)").clicked() {
+                            self.teleport_player(420.0, 360.0, 90.0, "Guarida del Pirata");
+                        }
+                        if ui.button("🚪 Pasillo Oeste").on_hover_text("Viajar al Pasillo Oeste y Almacén").clicked() {
+                            self.teleport_player(360.0, 680.0, 180.0, "Pasillo Oeste");
+                        }
+                        if ui.button("🖥️ Oficina").on_hover_text("Viajar a la Oficina del Guardia").clicked() {
+                            self.teleport_player(640.0, 960.0, 0.0, "Oficina de Seguridad");
+                        }
+                    },
+                    SalvageLocationIndex::Location2Fnaf2 => {
+                        if ui.button("🎁 Prize Corner").on_hover_text("Viajar a la Zona de Regalos y Caja de Puppet").clicked() {
+                            self.teleport_player(1760.0, 336.0, 180.0, "Prize Corner (Puppet Box)");
+                        }
+                        if ui.button("🎠 Carrusel").on_hover_text("Viajar a la Zona del Carrusel").clicked() {
+                            self.teleport_player(1232.0, 624.0, 270.0, "Zona del Carrusel");
+                        }
+                        if ui.button("🎉 Party Rooms").on_hover_text("Viajar a las Salas de Fiesta").clicked() {
+                            self.teleport_player(540.0, 450.0, 90.0, "Salas de Fiesta");
+                        }
+                        if ui.button("🚪 Pasillo Central").on_hover_text("Viajar al Pasillo Central").clicked() {
+                            self.teleport_player(960.0, 520.0, 180.0, "Pasillo Central");
+                        }
+                    },
+                    SalvageLocationIndex::Location3Fnaf3 => {
+                        if ui.button("🟢 Pasillo Fright").on_hover_text("Viajar al Pasillo Principal de Fazbear's Fright").clicked() {
+                            self.teleport_player(1280.0, 192.0, 180.0, "Pasillo de Fazbear's Fright");
+                        }
+                        if ui.button("💨 Ventilaciones").on_hover_text("Viajar a los Conductos de Ventilación").clicked() {
+                            self.teleport_player(1150.0, 720.0, 0.0, "Conductos de Ventilación");
+                        }
+                        if ui.button("📦 Desguace").on_hover_text("Viajar al Almacén de Desguace").clicked() {
+                            self.teleport_player(420.0, 350.0, 90.0, "Almacén de Desguace");
+                        }
+                    },
+                    SalvageLocationIndex::Location4WilliamWoods => {
+                        if ui.button("🛏️ Habitación").on_hover_text("Viajar a la Habitación Principal (Bed & Dresser)").clicked() {
+                            self.teleport_player(752.0, 64.0, 90.0, "Habitación Principal");
+                        }
+                        if ui.button("🌲 Bosque Sombrío").on_hover_text("Viajar al Exterior entre los Árboles").clicked() {
+                            self.teleport_player(1600.0, 800.0, 180.0, "Bosque Sombrío");
+                        }
+                        if ui.button("🚗 Carretera").on_hover_text("Viajar a la Carretera Nocturna").clicked() {
+                            self.teleport_player(1850.0, 1400.0, 270.0, "Carretera Nocturna");
+                        }
+                    },
+                    SalvageLocationIndex::Location5SisterLocation => {
+                        if ui.button("🕹️ Módulo Control").on_hover_text("Viajar al Módulo de Control y Ascensor").clicked() {
+                            self.teleport_player(1232.0, 1200.0, 270.0, "Módulo de Control Primario");
+                        }
+                        if ui.button("🥄 Scooping Room").on_hover_text("Viajar a la Sala de Desmantelamiento (Scooper)").clicked() {
+                            self.teleport_player(540.0, 640.0, 0.0, "Sala del Scooper");
+                        }
+                        if ui.button("🎪 Circus Gallery").on_hover_text("Viajar a la Galería del Circo de Baby").clicked() {
+                            self.teleport_player(1650.0, 580.0, 180.0, "Galería del Circo");
+                        }
+                    },
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Selector de Velocidad
+                ui.label(RichText::new("Velocidad:").size(12.0));
+                if ui.selectable_label(self.move_speed_multiplier == 1.0, "1x").on_hover_text("Velocidad normal de paso").clicked() {
+                    self.move_speed_multiplier = 1.0;
+                }
+                if ui.selectable_label(self.move_speed_multiplier == 2.0, "2x").on_hover_text("Velocidad rápida (x2)").clicked() {
+                    self.move_speed_multiplier = 2.0;
+                }
+                if ui.selectable_label(self.move_speed_multiplier == 4.0, "4x").on_hover_text("Velocidad turbo (x4)").clicked() {
+                    self.move_speed_multiplier = 4.0;
+                }
+
+                ui.add_space(6.0);
+                let noclip_col = if self.noclip_mode { Color32::from_rgb(255, 140, 50) } else { Color32::GRAY };
+                if ui.button(RichText::new(format!("{} Noclip", ic::GHOST)).color(noclip_col).strong()).on_hover_text("Activar / Desactivar modo fantasma (atravesar paredes sin colisión)").clicked() {
+                    self.noclip_mode = !self.noclip_mode;
+                    if self.noclip_mode {
+                        self.show_toast("Modo Noclip ACTIVADO (Sin colisión)", false);
+                    } else {
+                        self.show_toast("Modo Noclip DESACTIVADO (Física sólida)", false);
+                    }
+                }
+
+                ui.add_space(6.0);
+                let radar_btn_txt = match self.radar_display_mode {
+                    0 => "🗺️ Radar: Normal",
+                    1 => "🗺️ Radar: Zoom (Grande)",
+                    _ => "🗺️ Radar: Oculto",
+                };
+                if ui.button(radar_btn_txt).on_hover_text("Alternar tamaño del mini-mapa o esconderlo").clicked() {
+                    self.radar_display_mode = (self.radar_display_mode + 1) % 3;
+                }
+
+                let cross_col = if self.show_crosshair { Color32::from_rgb(110, 220, 255) } else { Color32::GRAY };
+                if ui.button(RichText::new(format!("{} Mira", ic::CROSSHAIR)).color(cross_col)).on_hover_text("Mostrar / Ocultar la retícula de inspección central").clicked() {
+                    self.show_crosshair = !self.show_crosshair;
+                }
+            });
+        }
 
         ui.add_space(4.0);
         ui.separator();
@@ -2238,7 +2461,8 @@ impl FrickEditorApp {
         if self.salvage_tab_mode == SalvageTabMode::LiveSimulator && !self.salvage_sim_paused {
             ctx.input(|i| {
                 let turn_speed = 2.4_f32;
-                let move_speed = if i.modifiers.shift { 6.8_f32 } else { 3.4_f32 };
+                let base_speed = if i.modifiers.shift { 6.8_f32 } else { 3.4_f32 };
+                let move_speed = base_speed * self.move_speed_multiplier;
 
                 // Rotación de Cámara (Rumbo / Yaw)
                 if i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft) {
@@ -2270,32 +2494,37 @@ impl FrickEditorApp {
                     m_dy -= fwd_y * move_speed;
                 }
 
-                // Comprobación de colisión física con paredes para deslizamiento
                 let target_x = self.maze_player_x + m_dx;
                 let target_y = self.maze_player_y + m_dy;
 
-                let mut blocked_x = false;
-                let mut blocked_y = false;
+                // Comprobación de colisión física (Omitida si Noclip está activo)
+                if self.noclip_mode {
+                    self.maze_player_x = target_x;
+                    self.maze_player_y = target_y;
+                } else {
+                    let mut blocked_x = false;
+                    let mut blocked_y = false;
 
-                if let Some(rd) = &active_room_data {
-                    for inst in &rd.instances {
-                        if inst.object.contains("Wall") {
-                            let wx0 = inst.x as f32 - 14.0;
-                            let wx1 = inst.x as f32 + 46.0;
-                            let wy0 = inst.y as f32 - 14.0;
-                            let wy1 = inst.y as f32 + 46.0;
-                            if target_x >= wx0 && target_x <= wx1 && self.maze_player_y >= wy0 && self.maze_player_y <= wy1 {
-                                blocked_x = true;
-                            }
-                            if self.maze_player_x >= wx0 && self.maze_player_x <= wx1 && target_y >= wy0 && target_y <= wy1 {
-                                blocked_y = true;
+                    if let Some(rd) = &active_room_data {
+                        for inst in &rd.instances {
+                            if inst.object.contains("Wall") {
+                                let wx0 = inst.x as f32 - 14.0;
+                                let wx1 = inst.x as f32 + 46.0;
+                                let wy0 = inst.y as f32 - 14.0;
+                                let wy1 = inst.y as f32 + 46.0;
+                                if target_x >= wx0 && target_x <= wx1 && self.maze_player_y >= wy0 && self.maze_player_y <= wy1 {
+                                    blocked_x = true;
+                                }
+                                if self.maze_player_x >= wx0 && self.maze_player_x <= wx1 && target_y >= wy0 && target_y <= wy1 {
+                                    blocked_y = true;
+                                }
                             }
                         }
                     }
-                }
 
-                if !blocked_x { self.maze_player_x = target_x; }
-                if !blocked_y { self.maze_player_y = target_y; }
+                    if !blocked_x { self.maze_player_x = target_x; }
+                    if !blocked_y { self.maze_player_y = target_y; }
+                }
             });
         }
 
@@ -2372,7 +2601,7 @@ impl FrickEditorApp {
             // MODO 1: SIMULADOR 3D RECREACIÓN 1:1 CON INSTANCIAS REALES
             // ==============================================================
             let avail_w = ui.available_width().max(600.0);
-            let view_h = 420.0;
+            let view_h = 430.0;
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail_w, view_h), Sense::click());
             let painter = ui.painter_at(rect);
 
@@ -2416,13 +2645,14 @@ impl FrickEditorApp {
 
             // Dibujar textura de baldosas repetidas en el suelo
             if let Some(ft) = &tex_floor {
-                let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(12.0, 8.0));
+                let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(14.0, 8.0));
                 painter.image(ft.id(), floor_rect, uv, Color32::from_rgba_unmultiplied(255, 255, 255, 60));
             }
 
             // 3. Proyección 3D en Primera Persona de Entidades Cercanas
             let rad = self.maze_player_yaw.to_radians();
             let mut visible_entities = Vec::new();
+            let mut targeted_object = None;
 
             if let Some(rd) = &active_room_data {
                 for inst in &rd.instances {
@@ -2453,6 +2683,13 @@ impl FrickEditorApp {
                     let base_size = 48.0_f32;
                     let scale = (rect.height() * 0.85 * base_size) / depth;
                     let screen_y = horizon_y + (scale * 0.35);
+
+                    // Detectar si la retícula central está apuntando a este objeto
+                    if diff_angle.abs() < 0.12 && depth < 280.0 {
+                        if targeted_object.as_ref().map(|(_, d, _)| depth < *d).unwrap_or(true) {
+                            targeted_object = Some((inst.object.clone(), depth, (inst.x, inst.y)));
+                        }
+                    }
 
                     visible_entities.push((depth, screen_x, screen_y, scale, inst.clone()));
                 }
@@ -2522,7 +2759,7 @@ impl FrickEditorApp {
                         painter.circle_filled(Pos2::new(sx, sy), p_sz * 0.35, Color32::from_rgba_unmultiplied(180, 100, 240, (230.0 * shade) as u8));
                     }
 
-                    if depth < 220.0 {
+                    if depth < 200.0 {
                         let short_obj = inst.object.replace("oMazeProp_", "").replace("oMazeWall_", "").replace("oMazeFloorDecoration_", "");
                         painter.text(
                             Pos2::new(sx, p_rect.min.y - 10.0),
@@ -2583,74 +2820,95 @@ impl FrickEditorApp {
                 painter.rect_filled(rect, 4.0, Color32::from_rgba_unmultiplied(0, 0, 0, 235));
             }
 
-            // 5. RADAR TOPOLÓGICO 1:1 EN LA ESQUINA SUPERIOR DERECHA (INTERACTIVO)
-            let radar_w = 210.0_f32;
-            let radar_h = 160.0_f32;
-            let radar_rect = Rect::from_min_size(Pos2::new(rect.max.x - radar_w - 12.0, rect.min.y + 12.0), Vec2::new(radar_w, radar_h));
+            // 5. Retícula Central (Crosshair) & Indicador de Inspección
+            if self.show_crosshair {
+                let cross_center = Pos2::new(rect.center().x, horizon_y);
+                let cross_size = 8.0_f32;
+                painter.line_segment([Pos2::new(cross_center.x - cross_size, cross_center.y), Pos2::new(cross_center.x + cross_size, cross_center.y)], Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(100, 220, 255, 180)));
+                painter.line_segment([Pos2::new(cross_center.x, cross_center.y - cross_size), Pos2::new(cross_center.x, cross_center.y + cross_size)], Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(100, 220, 255, 180)));
+                painter.circle_stroke(cross_center, 3.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 200)));
 
-            painter.rect_filled(radar_rect, 6.0, Color32::from_rgba_unmultiplied(12, 16, 24, 220));
-            painter.rect_stroke(radar_rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgb(0, 185, 230)));
+                if let Some((obj_name, depth, coords)) = targeted_object {
+                    let clean_obj = obj_name.replace("oMazeProp_", "").replace("oMazeWall_", "").replace("oMazeFloorDecoration_", "");
+                    let badge_text = format!("🎯 {} | {:.0}px | ({}, {})", clean_obj, depth, coords.0, coords.1);
+                    let badge_pos = Pos2::new(cross_center.x, cross_center.y + 24.0);
+                    let badge_rect = Rect::from_center_size(badge_pos, Vec2::new(badge_text.len() as f32 * 7.5 + 16.0, 22.0));
+                    painter.rect_filled(badge_rect, 4.0, Color32::from_rgba_unmultiplied(12, 18, 26, 215));
+                    painter.rect_stroke(badge_rect, 4.0, Stroke::new(1.0_f32, Color32::from_rgb(0, 200, 255)));
+                    painter.text(badge_pos, egui::Align2::CENTER_CENTER, badge_text, egui::FontId::monospace(11.0), Color32::from_rgb(120, 230, 255));
+                }
+            }
 
-            painter.text(
-                Pos2::new(radar_rect.min.x + 8.0, radar_rect.min.y + 6.0),
-                egui::Align2::LEFT_TOP,
-                format!("RADAR 1:1 ({})", cur_room_name),
-                egui::FontId::proportional(11.0),
-                Color32::from_rgb(0, 210, 255),
-            );
+            // 6. RADAR TOPOLÓGICO 1:1 EN LA ESQUINA SUPERIOR DERECHA (INTERACTIVO)
+            if self.radar_display_mode != 2 {
+                let (radar_w, radar_h) = if self.radar_display_mode == 1 {
+                    (320.0_f32, 240.0_f32) // Modo Zoom Grande
+                } else {
+                    (210.0_f32, 160.0_f32) // Modo Normal
+                };
 
-            let to_radar = |gx: f32, gy: f32| -> Pos2 {
-                let nx = (gx - min_x) / (max_x - min_x).max(1.0);
-                let ny = (gy - min_y) / (max_y - min_y).max(1.0);
-                Pos2::new(
-                    radar_rect.min.x + 8.0 + (nx * (radar_w - 16.0)),
-                    radar_rect.min.y + 24.0 + (ny * (radar_h - 32.0)),
-                )
-            };
+                let radar_rect = Rect::from_min_size(Pos2::new(rect.max.x - radar_w - 12.0, rect.min.y + 12.0), Vec2::new(radar_w, radar_h));
 
-            // Dibujar entidades en el Radar
-            if let Some(rd) = &active_room_data {
-                for inst in &rd.instances {
-                    let rp = to_radar(inst.x as f32, inst.y as f32);
-                    if inst.object.contains("Wall") {
-                        painter.rect_filled(Rect::from_center_size(rp, Vec2::new(3.0, 3.0)), 0.0, Color32::from_gray(100));
-                    } else if inst.object.contains("Arcade") {
-                        painter.circle_filled(rp, 2.5, Color32::from_rgb(180, 80, 255));
-                    } else if inst.object.contains("Stage") || inst.object.contains("PiratesCove") {
-                        painter.circle_filled(rp, 3.0, Color32::from_rgb(255, 140, 40));
+                painter.rect_filled(radar_rect, 6.0, Color32::from_rgba_unmultiplied(12, 16, 24, 220));
+                painter.rect_stroke(radar_rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgb(0, 185, 230)));
+
+                painter.text(
+                    Pos2::new(radar_rect.min.x + 8.0, radar_rect.min.y + 6.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("RADAR 1:1 ({})", cur_room_name),
+                    egui::FontId::proportional(11.0),
+                    Color32::from_rgb(0, 210, 255),
+                );
+
+                let to_radar = |gx: f32, gy: f32| -> Pos2 {
+                    let nx = (gx - min_x) / (max_x - min_x).max(1.0);
+                    let ny = (gy - min_y) / (max_y - min_y).max(1.0);
+                    Pos2::new(
+                        radar_rect.min.x + 8.0 + (nx * (radar_w - 16.0)),
+                        radar_rect.min.y + 24.0 + (ny * (radar_h - 32.0)),
+                    )
+                };
+
+                if let Some(rd) = &active_room_data {
+                    for inst in &rd.instances {
+                        let rp = to_radar(inst.x as f32, inst.y as f32);
+                        if inst.object.contains("Wall") {
+                            painter.rect_filled(Rect::from_center_size(rp, Vec2::new(3.0, 3.0)), 0.0, Color32::from_gray(100));
+                        } else if inst.object.contains("Arcade") {
+                            painter.circle_filled(rp, 2.5, Color32::from_rgb(180, 80, 255));
+                        } else if inst.object.contains("Stage") || inst.object.contains("PiratesCove") {
+                            painter.circle_filled(rp, 3.0, Color32::from_rgb(255, 140, 40));
+                        }
+                    }
+                }
+
+                let player_rp = to_radar(self.maze_player_x, self.maze_player_y);
+                painter.circle_filled(player_rp, 4.5, Color32::from_rgb(0, 255, 180));
+                painter.circle_stroke(player_rp, 5.5, Stroke::new(1.0_f32, Color32::WHITE));
+
+                let cone_len = if self.radar_display_mode == 1 { 32.0_f32 } else { 22.0_f32 };
+                let c_p1 = Pos2::new(player_rp.x + ((rad - 0.4).cos() * cone_len), player_rp.y + ((rad - 0.4).sin() * cone_len));
+                let c_p2 = Pos2::new(player_rp.x + ((rad + 0.4).cos() * cone_len), player_rp.y + ((rad + 0.4).sin() * cone_len));
+                painter.add(egui::Shape::convex_polygon(
+                    vec![player_rp, c_p1, c_p2],
+                    Color32::from_rgba_unmultiplied(255, 235, 90, 45),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 90, 160)),
+                ));
+
+                let radar_id = egui::Id::new("radar_click_drag");
+                let radar_interact = ui.interact(radar_rect, radar_id, Sense::click_and_drag());
+                if radar_interact.clicked() || radar_interact.dragged() {
+                    if let Some(mp) = radar_interact.hover_pos() {
+                        let nx = ((mp.x - radar_rect.min.x - 8.0) / (radar_w - 16.0)).clamp(0.0, 1.0);
+                        let ny = ((mp.y - radar_rect.min.y - 24.0) / (radar_h - 32.0)).clamp(0.0, 1.0);
+                        self.maze_player_x = min_x + (nx * (max_x - min_x));
+                        self.maze_player_y = min_y + (ny * (max_y - min_y));
                     }
                 }
             }
 
-            // Dibujar al Jugador en el Radar con Cono de Visión
-            let player_rp = to_radar(self.maze_player_x, self.maze_player_y);
-            painter.circle_filled(player_rp, 4.5, Color32::from_rgb(0, 255, 180));
-            painter.circle_stroke(player_rp, 5.5, Stroke::new(1.0_f32, Color32::WHITE));
-
-            // Cono de Visión en Radar
-            let cone_len = 22.0_f32;
-            let c_p1 = Pos2::new(player_rp.x + ((rad - 0.4).cos() * cone_len), player_rp.y + ((rad - 0.4).sin() * cone_len));
-            let c_p2 = Pos2::new(player_rp.x + ((rad + 0.4).cos() * cone_len), player_rp.y + ((rad + 0.4).sin() * cone_len));
-            painter.add(egui::Shape::convex_polygon(
-                vec![player_rp, c_p1, c_p2],
-                Color32::from_rgba_unmultiplied(255, 235, 90, 45),
-                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 90, 160)),
-            ));
-
-            // Clic en el Radar para teletransportarse instantáneamente
-            let radar_id = egui::Id::new("radar_click_drag");
-            let radar_interact = ui.interact(radar_rect, radar_id, Sense::click_and_drag());
-            if radar_interact.clicked() || radar_interact.dragged() {
-                if let Some(mp) = radar_interact.hover_pos() {
-                    let nx = ((mp.x - radar_rect.min.x - 8.0) / (radar_w - 16.0)).clamp(0.0, 1.0);
-                    let ny = ((mp.y - radar_rect.min.y - 24.0) / (radar_h - 32.0)).clamp(0.0, 1.0);
-                    self.maze_player_x = min_x + (nx * (max_x - min_x));
-                    self.maze_player_y = min_y + (ny * (max_y - min_y));
-                }
-            }
-
             // HUD Superior Izquierdo: Información de Sala y Zona
-            let hud_top = Rect::from_min_size(Pos2::new(rect.min.x + 12.0, rect.min.y + 12.0), Vec2::new(360.0, 52.0));
+            let hud_top = Rect::from_min_size(Pos2::new(rect.min.x + 12.0, rect.min.y + 12.0), Vec2::new(380.0, 52.0));
             painter.rect_filled(hud_top, 4.0, Color32::from_rgba_unmultiplied(10, 14, 20, 210));
             painter.rect_stroke(hud_top, 4.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 40)));
             painter.text(
@@ -2668,13 +2926,15 @@ impl FrickEditorApp {
                 Color32::from_rgb(110, 220, 255),
             );
 
-            // HUD Inferior: Coordenadas y Controles
-            let hud_bottom = Rect::from_min_size(Pos2::new(rect.min.x + 12.0, rect.max.y - 34.0), Vec2::new(560.0, 24.0));
+            // HUD Inferior: Coordenadas, Controles y Brújula Rápida
+            let hud_bottom = Rect::from_min_size(Pos2::new(rect.min.x + 12.0, rect.max.y - 36.0), Vec2::new(640.0, 26.0));
             painter.rect_filled(hud_bottom, 4.0, Color32::from_rgba_unmultiplied(10, 14, 20, 210));
+            
+            let noclip_status = if self.noclip_mode { " [NOCLIP]" } else { "" };
             painter.text(
                 Pos2::new(hud_bottom.min.x + 8.0, hud_bottom.center().y),
                 egui::Align2::LEFT_CENTER,
-                format!("[W][A][S][D]: Caminar | [Shift]: Correr | [Espacio]: Linterna | X: {:.0}, Y: {:.0} | Rumbo: {:.0}° | Clic Radar: Teleport", self.maze_player_x, self.maze_player_y, self.maze_player_yaw),
+                format!("[W][A][S][D]: Caminar | [Shift]: Correr | X: {:.0}, Y: {:.0} | Rumbo: {:.0}° ({}){}: {}", self.maze_player_x, self.maze_player_y, self.maze_player_yaw, self.move_speed_multiplier, noclip_status, zone_name),
                 egui::FontId::proportional(11.0),
                 Color32::from_rgb(140, 215, 255),
             );
