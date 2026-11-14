@@ -330,15 +330,15 @@ impl eframe::App for FrickEditorApp {
                     self.handle_one_click_play();
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 let utmt_header_btn = egui::Button::new(
-                    RichText::new(format!("{}  Abrir UTMT", ic::CODE))
-                        .size(13.0)
+                    RichText::new(format!("{} UTMT", ic::CODE))
+                        .size(12.0)
                         .strong()
                         .color(Color32::from_rgb(220, 235, 255)),
                 )
                 .fill(Color32::from_rgb(45, 65, 95))
-                .min_size(Vec2::new(120.0, 28.0));
+                .min_size(Vec2::new(78.0, 26.0));
 
                 if ui.add(utmt_header_btn).on_hover_text("Abrir UndertaleModTool directamente cargando data.win").clicked() {
                     match GameLauncher::open_undertale_mod_tool(&self.project.utmt_scripts_dir, &self.project.game_dir) {
@@ -355,15 +355,15 @@ impl eframe::App for FrickEditorApp {
                     }
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 let audit_header_btn = egui::Button::new(
-                    RichText::new(format!("{}  Auditoría & Notas", ic::FILE_TEXT))
-                        .size(13.0)
+                    RichText::new(format!("{} Auditoría", ic::FILE_TEXT))
+                        .size(12.0)
                         .strong()
                         .color(Color32::from_rgb(220, 245, 230)),
                 )
                 .fill(Color32::from_rgb(35, 75, 55))
-                .min_size(Vec2::new(150.0, 28.0));
+                .min_size(Vec2::new(98.0, 26.0));
 
                 if ui.add(audit_header_btn).on_hover_text("Ver qué se modificó en el juego, explicación de Phantoms/Puppet y auditoría de inyecciones").clicked() {
                     self.show_audit_window = true;
@@ -2577,8 +2577,16 @@ impl FrickEditorApp {
                     "sMazeDecor_Balloons"
                 } else if obj.contains("PaperPals") {
                     "sMazeDecor_PaperPals"
+                } else if obj.contains("MonitorTiny") {
+                    "sMazeTex_MonitorTiny"
+                } else if obj.contains("Monitor") {
+                    "sMazeTex_Monitor"
+                } else if obj.contains("Marionette") {
+                    "sMazeTex_Marionette"
+                } else if obj.contains("Vent") {
+                    "sMazeWall_Vent"
                 } else {
-                    "sMazeWall_Tiles"
+                    "sMazeWall"
                 }
             },
             SalvageLocationIndex::Location1Fnaf1 => {
@@ -2955,17 +2963,32 @@ impl FrickEditorApp {
 
             // Cargar texturas del mapa para proyectar en 3D (1:1 con GameMaker)
             let tex_floor = match self.selected_salvage_location {
-                SalvageLocationIndex::Location1Fnaf1 | SalvageLocationIndex::Location2Fnaf2 => self.get_maze_texture(ctx, "sMazeTex_Flooring"),
-                SalvageLocationIndex::Location3Fnaf3 => self.get_maze_texture(ctx, "sMazeTex_Wood").or_else(|| self.get_maze_texture(ctx, "sMazeTex_FloorConcrete")),
+                SalvageLocationIndex::Location1Fnaf1 => self.get_maze_texture(ctx, "sMazeTex_Flooring"),
+                SalvageLocationIndex::Location2Fnaf2 => self.get_maze_texture(ctx, "sMazeTex_FlooringPanels"),
+                SalvageLocationIndex::Location3Fnaf3 => self.get_maze_texture(ctx, "sMazeTex_FloorConcrete").or_else(|| self.get_maze_texture(ctx, "sMazeTex_Wood")),
                 SalvageLocationIndex::Location4WilliamWoods => self.get_maze_texture(ctx, "sMazeTex_FlooringPanels"),
                 SalvageLocationIndex::Location5SisterLocation => self.get_maze_texture(ctx, "sMazeTex_FloorConveyor").or_else(|| self.get_maze_texture(ctx, "sMazeTex_FloorConcrete")),
             };
             let tex_ceiling = self.get_maze_texture(ctx, "sMazeTex_Ceiling");
             let tex_wood = self.get_maze_texture(ctx, "sMazeTex_Wood");
-            let tex_default_wall = self.get_maze_texture(ctx, "sMazeWall_Tiles").or_else(|| self.get_maze_texture(ctx, "sMazeWall"));
+            let tex_default_wall = match self.selected_salvage_location {
+                SalvageLocationIndex::Location1Fnaf1 => self.get_maze_texture(ctx, "sMazeWall_Tiles"),
+                SalvageLocationIndex::Location2Fnaf2 => self.get_maze_texture(ctx, "sMazeWall"),
+                SalvageLocationIndex::Location3Fnaf3 => self.get_maze_texture(ctx, "sMazeTex_Wood"),
+                SalvageLocationIndex::Location4WilliamWoods => self.get_maze_texture(ctx, "sMazeWall_HouseHallway"),
+                SalvageLocationIndex::Location5SisterLocation => self.get_maze_texture(ctx, "sMazeTex_SLVentWall"),
+            };
+
+            // Parámetros de Cámara y Perspectiva 1:1
+            let horizon_y = rect.center().y;
+            let rad = self.maze_player_yaw.to_radians();
+            let cos_yaw = rad.cos();
+            let sin_yaw = rad.sin();
+            let fov = 66.0_f32.to_radians();
+            let half_fov_tan = (fov * 0.5).tan();
+            let focal = (rect.width() * 0.5) / half_fov_tan;
 
             // Fondo y Niebla Profunda
-            let horizon_y = rect.center().y - 10.0;
             let sky_color = match self.selected_salvage_location {
                 SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(10, 8, 7),
                 SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(12, 10, 18),
@@ -2985,9 +3008,12 @@ impl FrickEditorApp {
                 let t1 = ((i + 1) as f32 / ceil_strips as f32).powf(1.6);
                 let y0 = rect.min.y + (t0 * ceil_total_h);
                 let y1 = rect.min.y + (t1 * ceil_total_h);
+                let y_mid = (y0 + y1) * 0.5;
+                let dy = (horizon_y - y_mid).max(1.0);
+                let d = (72.0 * focal) / dy;
 
-                let depth_factor = (1.0 - t1).clamp(0.03, 1.0);
-                let brightness = (depth_factor * flash_intensity).clamp(0.02, 0.7);
+                let depth_factor = (1.0 - (d / 650.0)).clamp(0.0, 1.0);
+                let brightness = (depth_factor * flash_intensity).clamp(0.08, 0.65);
                 let col = Color32::from_rgba_unmultiplied(
                     (255.0 * brightness) as u8,
                     (255.0 * brightness) as u8,
@@ -2997,39 +3023,59 @@ impl FrickEditorApp {
 
                 let strip_rect = Rect::from_min_max(Pos2::new(rect.min.x, y0), Pos2::new(rect.max.x, y1));
                 if let Some(ct) = &tex_ceiling {
-                    let uv = Rect::from_min_max(Pos2::new(0.0, t0 * 4.0), Pos2::new(8.0, t1 * 4.0));
+                    let uv = Rect::from_min_max(Pos2::new(0.0, t0 * 3.0), Pos2::new(6.0, t1 * 3.0));
                     painter.image(ct.id(), strip_rect, uv, col);
                 } else {
                     painter.rect_filled(strip_rect, 0.0, col);
                 }
             }
 
-            // 2. SUELO EN PERSPECTIVA SUAVE Y REALISTA
+            // 2. SUELO EN PERSPECTIVA SUAVE Y REALISTA (Alineación 1:1 con GameMaker 36.0h)
             let floor_strips = 24;
             let floor_total_h = rect.max.y - horizon_y;
             for i in 0..floor_strips {
-                let t0 = (i as f32 / floor_strips as f32).powf(1.8);
-                let t1 = ((i + 1) as f32 / floor_strips as f32).powf(1.8);
+                let t0 = (i as f32 / floor_strips as f32).powf(1.7);
+                let t1 = ((i + 1) as f32 / floor_strips as f32).powf(1.7);
                 let y0 = horizon_y + (t0 * floor_total_h);
                 let y1 = horizon_y + (t1 * floor_total_h);
+                let y_mid = (y0 + y1) * 0.5;
+                let dy = (y_mid - horizon_y).max(1.0);
+                let d = (36.0 * focal) / dy;
 
-                let brightness = (t1 * flash_intensity).clamp(0.02, 1.0);
+                let dist_bright = ((1.0 - (d / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
                 let col = Color32::from_rgba_unmultiplied(
-                    (255.0 * brightness) as u8,
-                    (255.0 * brightness) as u8,
-                    (255.0 * brightness) as u8,
+                    (255.0 * dist_bright) as u8,
+                    (255.0 * dist_bright) as u8,
+                    (255.0 * dist_bright) as u8,
                     255,
                 );
 
                 let strip_rect = Rect::from_min_max(Pos2::new(rect.min.x, y0), Pos2::new(rect.max.x, y1));
                 if let Some(ft) = &tex_floor {
-                    let u_off = (self.maze_player_x * 0.03125).fract();
-                    let v_off = (self.maze_player_y * 0.03125).fract();
-                    let uv = Rect::from_min_max(
-                        Pos2::new(u_off, v_off + (t0 * 5.0)),
-                        Pos2::new(u_off + 8.0, v_off + (t1 * 5.0))
-                    );
-                    painter.image(ft.id(), strip_rect, uv, col);
+                    let span_w = (rect.width() / focal) * d;
+                    let cx = self.maze_player_x + d * cos_yaw;
+                    let cy = self.maze_player_y + d * sin_yaw;
+                    let rx = -sin_yaw;
+                    let ry = cos_yaw;
+                    let lx = cx - 0.5 * span_w * rx;
+                    let ly = cy - 0.5 * span_w * ry;
+                    let rx_w = cx + 0.5 * span_w * rx;
+                    let ry_w = cy + 0.5 * span_w * ry;
+
+                    let mut mesh = egui::Mesh::with_texture(ft.id());
+                    let idx = mesh.vertices.len() as u32;
+                    let u_l = lx / 32.0;
+                    let v_l = ly / 32.0;
+                    let u_r = rx_w / 32.0;
+                    let v_r = ry_w / 32.0;
+
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.min.x, y0), uv: Pos2::new(u_l, v_l), color: col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.max.x, y0), uv: Pos2::new(u_r, v_r), color: col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.max.x, y1), uv: Pos2::new(u_r, v_r + 0.25), color: col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.min.x, y1), uv: Pos2::new(u_l, v_l + 0.25), color: col });
+                    mesh.add_triangle(idx, idx + 1, idx + 2);
+                    mesh.add_triangle(idx, idx + 2, idx + 3);
+                    painter.add(egui::Shape::mesh(mesh));
                 } else {
                     let base_col = match self.selected_salvage_location {
                         SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(22, 18, 16),
@@ -3043,13 +3089,6 @@ impl FrickEditorApp {
             }
 
             // 3. RECOLECCIÓN DE GEOMETRÍA 3D SÓLIDA CON RAYCASTING (100% LIBRE DE NIEVE Y POLÍGONOS SOLAPADOS)
-            let rad = self.maze_player_yaw.to_radians();
-            let cos_yaw = rad.cos();
-            let sin_yaw = rad.sin();
-            let fov = 66.0_f32.to_radians();
-            let half_fov_tan = (fov * 0.5).tan();
-            let focal = (rect.width() * 0.5) / half_fov_tan;
-
             struct WallSegment {
                 x1: f32,
                 y1: f32,
@@ -3077,6 +3116,9 @@ impl FrickEditorApp {
 
             if let Some(rd) = &active_room_data {
                 for inst in &rd.instances {
+                    if inst.object.contains("Invisible") {
+                        continue;
+                    }
                     let is_wall = inst.object.contains("Wall");
                     let w_w = (inst.sx * 32.0).max(16.0);
                     let w_h = (inst.sy * 32.0).max(16.0);
@@ -3104,25 +3146,33 @@ impl FrickEditorApp {
 
                         if pz > 8.0 && pz < 700.0 {
                             let screen_x = rect.center().x + (pcx / pz) * focal;
-                            let base_sz = 52.0_f32;
-                            let scale = (base_sz / pz) * focal;
-                            let ground_y = horizon_y + (scale * 0.45);
-
-                            let (prop_w, prop_h) = if inst.object.contains("Arcade") || inst.object.contains("Door") {
-                                (scale * 1.1, scale * 2.2)
-                            } else if inst.object.contains("Bed") || inst.object.contains("Sofa") || inst.object.contains("Table") {
-                                (scale * 2.0, scale * 1.1)
+                            let (prop_w_world, prop_h_world) = if inst.object.contains("Arcade") {
+                                (32.0_f32, 54.0_f32)
+                            } else if inst.object.contains("Door") {
+                                (36.0_f32, 70.0_f32)
+                            } else if inst.object.contains("Table") {
+                                (48.0_f32, 28.0_f32)
+                            } else if inst.object.contains("Bed") || inst.object.contains("Sofa") {
+                                (52.0_f32, 32.0_f32)
+                            } else if inst.object.contains("Dresser") || inst.object.contains("Shelf") {
+                                (36.0_f32, 48.0_f32)
+                            } else if inst.object.contains("Puppet") || inst.object.contains("GiftBox") {
+                                (32.0_f32, 36.0_f32)
                             } else {
-                                (scale * 1.2, scale * 1.2)
+                                (32.0_f32, 36.0_f32)
                             };
+
+                            let prop_w = (prop_w_world / pz) * focal;
+                            let prop_h = (prop_h_world / pz) * focal;
+                            let ground_y = horizon_y + (36.0 / pz) * focal;
 
                             let p_rect = Rect::from_min_max(
                                 Pos2::new(screen_x - (prop_w * 0.5), ground_y - prop_h),
                                 Pos2::new(screen_x + (prop_w * 0.5), ground_y)
                             );
 
-                            let shade = ((1.0 - (pz / 680.0)).clamp(0.04, 1.0) * flash_intensity).clamp(0.02, 1.0);
-                            let col = Color32::from_rgba_unmultiplied((255.0 * shade) as u8, (255.0 * shade) as u8, (255.0 * shade) as u8, 255);
+                            let dist_shade = ((1.0 - (pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
+                            let col = Color32::from_rgba_unmultiplied((255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, 255);
 
                             props.push(PropBillboard {
                                 pz,
@@ -3178,14 +3228,14 @@ impl FrickEditorApp {
                     let perp_dist = closest_dist * angle_diff.cos();
                     z_buffer[r] = perp_dist;
 
-                    let wall_h_world = 74.0_f32;
-                    let wall_h_px = (wall_h_world / perp_dist.max(1.0)) * focal;
-                    let y0 = horizon_y - (wall_h_px * 0.55);
-                    let y1 = horizon_y + (wall_h_px * 0.45);
+                    let wall_h_top = 72.0_f32;
+                    let wall_h_bot = 36.0_f32;
+                    let y0 = horizon_y - (wall_h_top / perp_dist.max(1.0)) * focal;
+                    let y1 = horizon_y + (wall_h_bot / perp_dist.max(1.0)) * focal;
 
-                    let dist_shade = ((1.0 - (perp_dist / 620.0)).clamp(0.04, 1.0) * flash_intensity).clamp(0.02, 1.0);
-                    let angle_shade = angle_diff.cos().powi(2).clamp(0.5, 1.0);
-                    let total_shade = (dist_shade * angle_shade).clamp(0.02, 1.0);
+                    let dist_shade = ((1.0 - (perp_dist / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
+                    let angle_shade = angle_diff.cos().powi(2).clamp(0.65, 1.0);
+                    let total_shade = (dist_shade * angle_shade).clamp(0.10, 1.0);
                     let shade_u8 = (255.0 * total_shade) as u8;
                     let col = Color32::from_rgba_unmultiplied(shade_u8, shade_u8, shade_u8, 255);
 
@@ -3194,15 +3244,16 @@ impl FrickEditorApp {
                     let col_rect = Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1));
 
                     let wall_pos = closest_u * closest_len;
-                    let u0 = ((wall_pos % 32.0) / 32.0).clamp(0.0, 1.0);
-                    let u1 = (((wall_pos + (col_w * (perp_dist / focal))) % 32.0) / 32.0).clamp(0.0, 1.0);
+                    let tex_col = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
+                    let u0 = tex_col / 32.0;
+                    let u1 = (tex_col + 1.0) / 32.0;
 
                     if let Some(tid) = closest_tex_id {
                         let mut mesh = egui::Mesh::with_texture(tid);
                         let idx = mesh.vertices.len() as u32;
                         mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y0), uv: Pos2::new(u0, 0.0), color: col });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y0), uv: Pos2::new(if u1 < u0 { 1.0 } else { u1 }, 0.0), color: col });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y1), uv: Pos2::new(if u1 < u0 { 1.0 } else { u1 }, 1.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y0), uv: Pos2::new(u1, 0.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y1), uv: Pos2::new(u1, 1.0), color: col });
                         mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y1), uv: Pos2::new(u0, 1.0), color: col });
                         mesh.add_triangle(idx, idx + 1, idx + 2);
                         mesh.add_triangle(idx, idx + 2, idx + 3);
@@ -3256,10 +3307,13 @@ impl FrickEditorApp {
 
                         if az > 8.0 && az < 680.0 {
                             let screen_x = rect.center().x + (acx / az) * focal;
-                            let base_size = 56.0_f32;
-                            let scale = (base_size / az) * focal;
-                            let ground_y = horizon_y + (scale * 0.45);
-                            let a_rect = Rect::from_center_size(Pos2::new(screen_x, ground_y - (scale * 0.6)), Vec2::new(scale * 1.3, scale * 1.3));
+                            let anim_w = (48.0_f32 / az) * focal;
+                            let anim_h = (56.0_f32 / az) * focal;
+                            let ground_y = horizon_y + (36.0 / az.max(1.0)) * focal;
+                            let a_rect = Rect::from_min_max(
+                                Pos2::new(screen_x - (anim_w * 0.5), ground_y - anim_h),
+                                Pos2::new(screen_x + (anim_w * 0.5), ground_y)
+                            );
 
                             let ray_idx = ((screen_x - rect.min.x) / col_w).round() as i32;
                             let occluded = if ray_idx >= 0 && (ray_idx as usize) < num_rays {
