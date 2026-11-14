@@ -1,5 +1,6 @@
 use crate::builder::IdeBuilder;
 use crate::models::AnimatronicProject;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -9,9 +10,282 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActiveGameProfile {
+    Vanilla,
+    Modded,
+}
+
+impl ActiveGameProfile {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ActiveGameProfile::Vanilla => "Vanilla Limpio (Sin Mods)",
+            ActiveGameProfile::Modded => "Modded (Murray & Amigos)",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileMetadata {
+    pub active_profile: String,
+    pub last_switched: String,
+    pub active_mods: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameIntegrityReport {
+    pub game_dir: PathBuf,
+    pub game_exe_path: Option<PathBuf>,
+    pub game_exe_name: String,
+    pub game_exe_size: u64,
+    pub data_win_exists: bool,
+    pub data_win_size: u64,
+    pub vanilla_backup_exists: bool,
+    pub vanilla_backup_path: Option<PathBuf>,
+    pub vanilla_backup_size: u64,
+    pub active_profile: ActiveGameProfile,
+    pub utmt_exe_path: Option<PathBuf>,
+    pub is_healthy: bool,
+    pub details: Vec<String>,
+}
+
+fn simple_timestamp() -> String {
+    let now = std::time::SystemTime::now();
+    let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = duration.as_secs();
+    let hours = (secs / 3600) % 24;
+    let mins = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02} UTC", hours, mins, s)
+}
+
 pub struct GameLauncher;
 
 impl GameLauncher {
+    /// Devuelve la ruta estándar para el respaldo vanilla intocable
+    pub fn get_vanilla_backup_path(game_dir: &Path) -> PathBuf {
+        game_dir.join("data_vanilla.win")
+    }
+
+    /// Busca si ya existe una copia de respaldo limpia previa en el directorio
+    pub fn find_existing_backup_candidate(game_dir: &Path) -> Option<PathBuf> {
+        let std_backup = Self::get_vanilla_backup_path(game_dir);
+        if std_backup.exists() {
+            return Some(std_backup);
+        }
+
+        let candidates = [
+            "data_bak - copia - copia - copia.win",
+            "data_bak.win",
+            "data.win.bak",
+            "data_backup.win",
+            "data.win.vanilla",
+        ];
+
+        for name in candidates {
+            let p = game_dir.join(name);
+            if p.exists() {
+                if let Ok(meta) = std::fs::metadata(&p) {
+                    if meta.len() > 10_000_000 {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Asegura que exista una copia de respaldo intacta (data_vanilla.win)
+    pub fn ensure_vanilla_backup(game_dir: &Path) -> Result<PathBuf, String> {
+        let target = Self::get_vanilla_backup_path(game_dir);
+        if target.exists() {
+            if let Ok(meta) = std::fs::metadata(&target) {
+                if meta.len() > 10_000_000 {
+                    return Ok(target);
+                }
+            }
+        }
+
+        // Si hay una copia previa limpia en el directorio, usarla preferentemente
+        if let Some(candidate) = Self::find_existing_backup_candidate(game_dir) {
+            if candidate != target {
+                std::fs::copy(&candidate, &target)
+                    .map_err(|e| format!("Error clonando respaldo desde {}: {}", candidate.display(), e))?;
+                return Ok(target);
+            }
+        }
+
+        // Si no hay respaldo previo pero existe data.win, crear el respaldo desde data.win
+        let data_win = game_dir.join("data.win");
+        if data_win.exists() {
+            std::fs::copy(&data_win, &target)
+                .map_err(|e| format!("Error creando respaldo de data.win: {}", e))?;
+            return Ok(target);
+        }
+
+        Err("No se encontró data.win ni ninguna copia de seguridad en el directorio del juego.".to_string())
+    }
+
+    /// Fuerza la creación o renovación del respaldo intacto de data.win
+    pub fn create_vanilla_backup(game_dir: &Path, force: bool) -> Result<PathBuf, String> {
+        let target = Self::get_vanilla_backup_path(game_dir);
+        if !force && target.exists() {
+            return Ok(target);
+        }
+
+        // Preferir candidate antiguo si existe, o data.win
+        let source = if let Some(cand) = Self::find_existing_backup_candidate(game_dir) {
+            if cand != target { cand } else { game_dir.join("data.win") }
+        } else {
+            game_dir.join("data.win")
+        };
+
+        if !source.exists() {
+            return Err("No se encontró archivo fuente para respaldar en el directorio del juego.".to_string());
+        }
+
+        std::fs::copy(&source, &target)
+            .map_err(|e| format!("Error al escribir {}: {}", target.display(), e))?;
+
+        Ok(target)
+    }
+
+    /// Restaura el archivo data.win original limpio desde el respaldo intacto
+    pub fn restore_vanilla_data(game_dir: &Path) -> Result<PathBuf, String> {
+        let backup = Self::ensure_vanilla_backup(game_dir)?;
+        let data_win = game_dir.join("data.win");
+
+        std::fs::copy(&backup, &data_win)
+            .map_err(|e| format!("Error restaurando data.win desde el respaldo: {}", e))?;
+
+        // Guardar metadata de perfil activo
+        Self::save_profile_state(game_dir, ActiveGameProfile::Vanilla, &[]);
+
+        Ok(data_win)
+    }
+
+    /// Guarda el estado del perfil en un archivo local `.frick_profile.json`
+    pub fn save_profile_state(game_dir: &Path, profile: ActiveGameProfile, active_mods: &[String]) {
+        let meta = ProfileMetadata {
+            active_profile: match profile {
+                ActiveGameProfile::Vanilla => "vanilla".to_string(),
+                ActiveGameProfile::Modded => "modded".to_string(),
+            },
+            last_switched: simple_timestamp(),
+            active_mods: active_mods.to_vec(),
+        };
+
+        if let Ok(json) = serde_json::to_string_pretty(&meta) {
+            let _ = std::fs::write(game_dir.join(".frick_profile.json"), json);
+        }
+    }
+
+    /// Lee el estado del perfil actual
+    pub fn get_profile_state(game_dir: &Path) -> ActiveGameProfile {
+        let profile_file = game_dir.join(".frick_profile.json");
+        if let Ok(content) = std::fs::read_to_string(profile_file) {
+            if let Ok(meta) = serde_json::from_str::<ProfileMetadata>(&content) {
+                if meta.active_profile.to_lowercase() == "vanilla" {
+                    return ActiveGameProfile::Vanilla;
+                } else if meta.active_profile.to_lowercase() == "modded" {
+                    return ActiveGameProfile::Modded;
+                }
+            }
+        }
+        ActiveGameProfile::Vanilla
+    }
+
+    /// Realiza un chequeo exhaustivo de integridad del juego
+    pub fn check_integrity(game_dir: &Path, utmt_scripts_dir: &Path) -> GameIntegrityReport {
+        let mut details = Vec::new();
+        let game_exe = Self::find_game_executable(game_dir);
+        let mut game_exe_name = String::from("(No encontrado)");
+        let mut game_exe_size = 0;
+
+        if let Some(ref ge) = game_exe {
+            game_exe_name = ge.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if let Ok(meta) = std::fs::metadata(ge) {
+                game_exe_size = meta.len();
+                details.push(format!("Ejecutable detectado: {} ({:.1} MB)", game_exe_name, game_exe_size as f64 / (1024.0 * 1024.0)));
+            }
+        } else {
+            details.push("❌ ADVERTENCIA: No se localizó el ejecutable del juego en la carpeta.".to_string());
+        }
+
+        let data_win_path = game_dir.join("data.win");
+        let data_win_exists = data_win_path.exists();
+        let mut data_win_size = 0;
+        if data_win_exists {
+            if let Ok(meta) = std::fs::metadata(&data_win_path) {
+                data_win_size = meta.len();
+                details.push(format!("Archivo principal data.win: {:.1} MB ({} bytes)", data_win_size as f64 / (1024.0 * 1024.0), data_win_size));
+            }
+        } else {
+            details.push("❌ ERROR CRÍTICO: No existe data.win en el directorio del juego.".to_string());
+        }
+
+        let backup_cand = Self::find_existing_backup_candidate(game_dir);
+        let vanilla_backup_exists = backup_cand.is_some();
+        let mut vanilla_backup_size = 0;
+        if let Some(ref bp) = backup_cand {
+            if let Ok(meta) = std::fs::metadata(bp) {
+                vanilla_backup_size = meta.len();
+                let b_name = bp.file_name().unwrap_or_default().to_string_lossy();
+                details.push(format!("Copia de respaldo intacta: {} ({:.1} MB)", b_name, vanilla_backup_size as f64 / (1024.0 * 1024.0)));
+            }
+        } else {
+            details.push("⚠️ Sin copia de seguridad: Se recomienda pulsar 'Generar Respaldo'.".to_string());
+        }
+
+        let utmt_exe = Self::find_utmt_executable(utmt_scripts_dir);
+        if let Some(ref ue) = utmt_exe {
+            let u_name = ue.file_name().unwrap_or_default().to_string_lossy();
+            details.push(format!("UndertaleModTool listo: {}", u_name));
+        } else {
+            details.push("⚠️ UndertaleModTool no encontrado en rutas automáticas.".to_string());
+        }
+
+        let active_profile = Self::get_profile_state(game_dir);
+        details.push(format!("Perfil activo actual: {}", active_profile.display_name()));
+
+        let is_healthy = game_exe.is_some() && data_win_exists && (vanilla_backup_exists || data_win_size == 31020384);
+
+        GameIntegrityReport {
+            game_dir: game_dir.to_path_buf(),
+            game_exe_path: game_exe,
+            game_exe_name,
+            game_exe_size,
+            data_win_exists,
+            data_win_size,
+            vanilla_backup_exists,
+            vanilla_backup_path: backup_cand,
+            vanilla_backup_size,
+            active_profile,
+            utmt_exe_path: utmt_exe,
+            is_healthy,
+            details,
+        }
+    }
+
+    /// Lanza el juego en Modo Vanilla Limpio:
+    /// Restaura de forma instantánea data.win desde el respaldo intacto y ejecuta el juego oficial.
+    pub fn launch_vanilla(game_dir: &Path) -> Result<String, String> {
+        let game_exe = Self::find_game_executable(game_dir)
+            .ok_or_else(|| format!("No se pudo encontrar el ejecutable del juego en {}", game_dir.display()))?;
+
+        // 1. Restaurar data.win limpio
+        Self::restore_vanilla_data(game_dir)?;
+
+        // 2. Iniciar el juego limpio
+        Self::launch_game(&game_exe)?;
+
+        Ok(format!(
+            "¡Modo Vanilla Activado! data.win restaurado al estado oficial limpio y juego iniciado: {}",
+            game_exe.file_name().unwrap_or_default().to_string_lossy()
+        ))
+    }
+
     /// Inyecta el script maestro usando UndertaleModTool en modo silencioso (oculto en Windows)
     pub fn inject_silently(
         utmt_exe_path: &Path,
@@ -83,8 +357,6 @@ impl GameLauncher {
             }
         } else {
             // UndertaleModTool GUI / SingleFile:
-            // No pasar CREATE_NO_WINDOW ni -q porque WPF revienta al ocultar ventana sin consola.
-            // Abrimos UndertaleModTool con data.win cargado y el script listo en Scripts/.
             cmd.arg(data_win_path);
 
             let _child = cmd
@@ -148,6 +420,7 @@ impl GameLauncher {
                 }
             }
         }
+
         None
     }
 
@@ -180,11 +453,13 @@ impl GameLauncher {
         None
     }
 
-    /// Flujo integral "One-Click Play":
-    /// 1. Empaqueta y exporta todos los animatrónicos activos.
-    /// 2. Genera el script maestro `master_injector.csx`.
-    /// 3. Inyecta silenciosamente en `data.win`.
-    /// 4. Inicia `Frickbears 3.exe`.
+    /// Flujo integral "One-Click Play" para Modo Modded:
+    /// 1. Asegura la copia de seguridad intacta data_vanilla.win.
+    /// 2. Restaura data.win limpio para garantizar que no haya corrupción previa.
+    /// 3. Empaqueta y exporta todos los animatrónicos activos.
+    /// 4. Genera el script maestro `master_injector.csx`.
+    /// 5. Inyecta silenciosamente en `data.win`.
+    /// 6. Inicia `Frickbears 3.exe`.
     pub fn build_inject_and_play(
         active_mods: &[AnimatronicProject],
         utmt_scripts_dir: &Path,
@@ -208,11 +483,18 @@ impl GameLauncher {
         let game_exe = Self::find_game_executable(game_dir)
             .ok_or_else(|| format!("No se pudo encontrar el ejecutable del juego en {}", game_dir.display()))?;
 
-        // 1 & 2. Construir todos los mods activos y generar `master_injector.csx`
+        // 1 & 2. Blindaje estilo Minecraft: Asegurar respaldo y restaurar base limpia antes de inyectar
+        let _ = Self::ensure_vanilla_backup(game_dir)?;
+        Self::restore_vanilla_data(game_dir)?;
+
+        // 3. Construir todos los mods activos y generar `master_injector.csx`
         let master_csx_path = IdeBuilder::build_all_active_mods(active_mods, game_dir, utmt_scripts_dir, true)?;
 
-        // 3. Inyección silenciosa o preparación en UTMT
+        // 4. Inyección silenciosa o preparación en UTMT
         let inject_result = Self::inject_silently(&utmt_exe, &data_win_path, &master_csx_path)?;
+
+        let mod_names: Vec<String> = active_mods.iter().map(|m| m.internal_id.clone()).collect();
+        Self::save_profile_state(game_dir, ActiveGameProfile::Modded, &mod_names);
 
         let is_cli = utmt_exe
             .file_name()
@@ -225,14 +507,14 @@ impl GameLauncher {
             // Si es CLI, ya inyectó y guardó en data.win, arrancamos el juego inmediatamente
             Self::launch_game(&game_exe)?;
             Ok(format!(
-                "¡Éxito! Inyectados {} mod(s) y juego iniciado: {}",
+                "¡Éxito! Inyectados {} mod(s) sobre base limpia y juego iniciado: {}",
                 active_mods.len(),
                 game_exe.file_name().unwrap_or_default().to_string_lossy()
             ))
         } else {
             // Si es GUI, UTMT se abrió con data.win cargado
             Ok(format!(
-                "¡Script Maestro Generado!\n{}\n(Tras ejecutarlo en UTMT, puedes abrir el juego directamente).",
+                "¡Base limpia preparada y Script Maestro Generado!\n{}\n(Tras ejecutarlo en UTMT, puedes abrir el juego directamente).",
                 inject_result
             ))
         }

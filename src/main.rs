@@ -5,7 +5,7 @@ mod models;
 pub mod node_editor;
 
 use builder::IdeBuilder;
-use launcher::GameLauncher;
+use launcher::{ActiveGameProfile, GameIntegrityReport, GameLauncher};
 use mod_manager::ModManager;
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
@@ -110,6 +110,10 @@ struct FrickEditorApp {
     maze_tex_cache: HashMap<String, Option<TextureHandle>>,
     wall_style_tron: bool,
     selected_custom_prop_id: Option<String>,
+    // Perfiles y Diagnóstico de Integridad
+    active_profile: ActiveGameProfile,
+    integrity_report: Option<GameIntegrityReport>,
+    show_integrity_modal: bool,
 }
 
 impl FrickEditorApp {
@@ -156,6 +160,7 @@ impl FrickEditorApp {
         }
 
         let (_graph, node_state) = node_editor::create_default_murray_graph();
+        let initial_profile = GameLauncher::get_profile_state(&default_proj.game_dir);
 
         Self {
             project: default_proj,
@@ -199,10 +204,35 @@ impl FrickEditorApp {
             maze_tex_cache: HashMap::new(),
             wall_style_tron: true,
             selected_custom_prop_id: None,
+            active_profile: initial_profile,
+            integrity_report: None,
+            show_integrity_modal: false,
         }
     }
 
     fn handle_one_click_play(&mut self) {
+        self.handle_play_modded();
+    }
+
+    fn handle_play_vanilla(&mut self) {
+        self.status_message = "Restaurando data.win limpio e iniciando Modo Vanilla...".to_string();
+        self.status_is_error = false;
+        match GameLauncher::launch_vanilla(&self.project.game_dir) {
+            Ok(msg) => {
+                self.active_profile = ActiveGameProfile::Vanilla;
+                self.status_is_error = false;
+                self.status_message = msg;
+                self.show_toast(format!("{} Juego Vanilla iniciado sin mods.", ic::CHECK_CIRCLE), false);
+            }
+            Err(err) => {
+                self.status_is_error = true;
+                self.status_message = err.clone();
+                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
+            }
+        }
+    }
+
+    fn handle_play_modded(&mut self) {
         // 1. Sincronizar el proyecto actual en el gestor
         self.mod_manager.add_or_update_mod(self.project.clone());
 
@@ -222,22 +252,73 @@ impl FrickEditorApp {
             active_mods = vec![self.project.clone()];
         }
 
-        self.status_message = format!("Inyectando silenciosamente {} mod(s) y lanzando juego...", active_mods.len());
+        self.status_message = format!("Inyectando silenciosamente {} mod(s) sobre base limpia...", active_mods.len());
         self.status_is_error = false;
 
-        // 4. Inyección silenciosa + Iniciar Frickbear's 3
+        // 4. Inyección segura + Iniciar Frickbear's 3
         match GameLauncher::build_inject_and_play(
             &active_mods,
             &self.project.utmt_scripts_dir,
             &self.project.game_dir,
         ) {
             Ok(msg) => {
+                self.active_profile = ActiveGameProfile::Modded;
                 self.status_is_error = false;
                 self.status_message = msg;
+                self.show_toast(format!("{} Modo Modded: Murray & Amigos activos.", ic::ROCKET_LAUNCH), false);
             }
             Err(err) => {
                 self.status_is_error = true;
-                self.status_message = err;
+                self.status_message = err.clone();
+                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
+            }
+        }
+    }
+
+    fn handle_generate_backup(&mut self) {
+        match GameLauncher::create_vanilla_backup(&self.project.game_dir, true) {
+            Ok(p) => {
+                self.status_is_error = false;
+                let fname = p.file_name().unwrap_or_default().to_string_lossy();
+                self.status_message = format!("Respaldo intacto creado con éxito en: {}", p.display());
+                self.show_toast(format!("{} Respaldo {} generado.", ic::SHIELD_CHECK, fname), false);
+            }
+            Err(err) => {
+                self.status_is_error = true;
+                self.status_message = err.clone();
+                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
+            }
+        }
+    }
+
+    fn handle_check_integrity(&mut self) {
+        let rep = GameLauncher::check_integrity(&self.project.game_dir, &self.project.utmt_scripts_dir);
+        self.active_profile = rep.active_profile;
+        let is_ok = rep.is_healthy;
+        self.integrity_report = Some(rep);
+        self.show_integrity_modal = true;
+        if is_ok {
+            self.show_toast(format!("{} Integridad verificada: Juego 100% listo.", ic::CHECK_CIRCLE), false);
+        } else {
+            self.show_toast(format!("{} Se encontraron observaciones en los archivos.", ic::WARNING_CIRCLE), true);
+        }
+    }
+
+    fn handle_restore_vanilla_now(&mut self) {
+        match GameLauncher::restore_vanilla_data(&self.project.game_dir) {
+            Ok(_) => {
+                self.active_profile = ActiveGameProfile::Vanilla;
+                self.status_is_error = false;
+                self.status_message = "data.win restaurado al estado original limpio.".to_string();
+                self.show_toast(format!("{} data.win restaurado a Vanilla.", ic::CHECK_CIRCLE), false);
+                if self.show_integrity_modal {
+                    self.integrity_report = Some(GameLauncher::check_integrity(&self.project.game_dir, &self.project.utmt_scripts_dir));
+                }
+            }
+            Err(err) => {
+                self.status_is_error = true;
+                self.status_message = err.clone();
+                self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
             }
         }
     }
@@ -338,17 +419,34 @@ impl eframe::App for FrickEditorApp {
                 );
 
                 ui.add_space(10.0);
-                let play_header_btn = egui::Button::new(
-                    RichText::new(format!("{}  PLAY (Jugar)", ic::PLAY))
-                        .size(13.5)
+                // Conmutador de Perfiles en Barra Superior:
+                // 1. [🎮 Jugar Vanilla (Juego Limpio)]
+                let play_vanilla_btn = egui::Button::new(
+                    RichText::new(format!("{}  Jugar Vanilla", ic::GAME_CONTROLLER))
+                        .size(12.5)
+                        .strong()
+                        .color(Color32::from_rgb(220, 255, 230)),
+                )
+                .fill(Color32::from_rgb(25, 105, 60))
+                .min_size(Vec2::new(135.0, 28.0));
+
+                if ui.add(play_vanilla_btn).on_hover_text("Restaura data.win original limpio desde el respaldo intacto y abre el juego oficial sin mods").clicked() {
+                    self.handle_play_vanilla();
+                }
+
+                ui.add_space(4.0);
+                // 2. [🚀 Jugar Modded (Murray & Amigos)]
+                let play_modded_btn = egui::Button::new(
+                    RichText::new(format!("{}  Jugar Modded", ic::ROCKET_LAUNCH))
+                        .size(12.5)
                         .strong()
                         .color(Color32::WHITE),
                 )
                 .fill(Color32::from_rgb(220, 95, 20))
-                .min_size(Vec2::new(140.0, 28.0));
+                .min_size(Vec2::new(135.0, 28.0));
 
-                if ui.add(play_header_btn).clicked() {
-                    self.handle_one_click_play();
+                if ui.add(play_modded_btn).on_hover_text("Inyecta los animatrónicos activos (Murray y amigos) sobre la base limpia y arranca el juego").clicked() {
+                    self.handle_play_modded();
                 }
 
                 ui.add_space(4.0);
@@ -359,7 +457,7 @@ impl eframe::App for FrickEditorApp {
                         .color(Color32::from_rgb(220, 235, 255)),
                 )
                 .fill(Color32::from_rgb(45, 65, 95))
-                .min_size(Vec2::new(78.0, 26.0));
+                .min_size(Vec2::new(72.0, 26.0));
 
                 if ui.add(utmt_header_btn).on_hover_text("Abrir UndertaleModTool directamente cargando data.win").clicked() {
                     match GameLauncher::open_undertale_mod_tool(&self.project.utmt_scripts_dir, &self.project.game_dir) {
@@ -384,10 +482,24 @@ impl eframe::App for FrickEditorApp {
                         .color(Color32::from_rgb(220, 245, 230)),
                 )
                 .fill(Color32::from_rgb(35, 75, 55))
-                .min_size(Vec2::new(98.0, 26.0));
+                .min_size(Vec2::new(88.0, 26.0));
 
-                if ui.add(audit_header_btn).on_hover_text("Ver qué se modificó en el juego, explicación de Phantoms/Puppet y auditoría de inyecciones").clicked() {
+                if ui.add(audit_header_btn).on_hover_text("Ver qué se modificó en el juego, explicación técnica y auditoría de inyecciones").clicked() {
                     self.show_audit_window = true;
+                }
+
+                ui.add_space(4.0);
+                let integ_header_btn = egui::Button::new(
+                    RichText::new(format!("{} Integridad", ic::MAGNIFYING_GLASS))
+                        .size(12.0)
+                        .strong()
+                        .color(Color32::from_rgb(220, 240, 255)),
+                )
+                .fill(Color32::from_rgb(35, 55, 85))
+                .min_size(Vec2::new(92.0, 26.0));
+
+                if ui.add(integ_header_btn).on_hover_text("Revisar integridad de archivos, respaldos y estado de data.win").clicked() {
+                    self.handle_check_integrity();
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -716,6 +828,120 @@ impl eframe::App for FrickEditorApp {
                     });
                 });
         }
+
+        // ==========================================================
+        // VENTANA MODAL FLOTANTE DE INTEGRIDAD DE ARCHIVOS (DATA.WIN)
+        // ==========================================================
+        if self.show_integrity_modal {
+            if let Some(report) = self.integrity_report.clone() {
+                let mut is_open = true;
+                let mut do_gen_backup = false;
+                let mut do_restore_vanilla = false;
+                let mut do_close = false;
+
+                egui::Window::new(RichText::new(format!("{}  Auditoría de Integridad del Juego (data.win)", ic::SHIELD_CHECK)).strong().size(14.0))
+                    .default_width(640.0)
+                    .default_height(440.0)
+                    .resizable(true)
+                    .open(&mut is_open)
+                    .show(ctx, |ui| {
+                        let health_col = if report.is_healthy { Color32::from_rgb(80, 230, 130) } else { Color32::from_rgb(255, 90, 80) };
+                        let health_icon = if report.is_healthy { ic::CHECK_CIRCLE } else { ic::WARNING_CIRCLE };
+                        let health_txt = if report.is_healthy { "ESTADO DEL JUEGO: 100% SALUDABLE & LISTO" } else { "ESTADO DEL JUEGO: OBSERVACIONES DETECTADAS" };
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(health_icon).size(24.0).color(health_col));
+                            ui.label(RichText::new(health_txt).strong().size(14.0).color(health_col));
+                        });
+
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+
+                        egui::Grid::new("integrity_grid")
+                            .num_columns(2)
+                            .spacing([14.0, 8.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Directorio del Juego:").strong());
+                                ui.label(RichText::new(report.game_dir.display().to_string()).monospace().size(11.0));
+                                ui.end_row();
+
+                                ui.label(RichText::new("Ejecutable Principal:").strong());
+                                ui.label(RichText::new(format!("{} ({:.1} MB)", report.game_exe_name, report.game_exe_size as f64 / (1024.0 * 1024.0))).monospace().size(11.0));
+                                ui.end_row();
+
+                                ui.label(RichText::new("Archivo data.win:").strong());
+                                let dw_txt = if report.data_win_exists {
+                                    format!("✅ Presente ({:.1} MB | {} bytes)", report.data_win_size as f64 / (1024.0 * 1024.0), report.data_win_size)
+                                } else {
+                                    "❌ No encontrado".to_string()
+                                };
+                                ui.label(RichText::new(dw_txt).monospace().size(11.0));
+                                ui.end_row();
+
+                                ui.label(RichText::new("Respaldo Vanilla Intacto:").strong());
+                                let bk_txt = if report.vanilla_backup_exists {
+                                    let b_name = report.vanilla_backup_path.as_ref().and_then(|p| p.file_name()).unwrap_or_default().to_string_lossy();
+                                    format!("✅ Protegido ({}: {:.1} MB)", b_name, report.vanilla_backup_size as f64 / (1024.0 * 1024.0))
+                                } else {
+                                    "⚠️ Sin Respaldo Creado".to_string()
+                                };
+                                ui.label(RichText::new(bk_txt).monospace().size(11.0));
+                                ui.end_row();
+
+                                ui.label(RichText::new("Perfil Actual Detectado:").strong());
+                                ui.label(RichText::new(report.active_profile.display_name()).color(Color32::from_rgb(255, 200, 80)).strong());
+                                ui.end_row();
+
+                                ui.label(RichText::new("Motor de Inyección (UTMT):").strong());
+                                let ut_txt = if let Some(ref ut) = report.utmt_exe_path {
+                                    format!("✅ Listo ({})", ut.file_name().unwrap_or_default().to_string_lossy())
+                                } else {
+                                    "⚠️ No encontrado en rutas por defecto".to_string()
+                                };
+                                ui.label(RichText::new(ut_txt).monospace().size(11.0));
+                                ui.end_row();
+                            });
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Registro de Verificaciones:").strong());
+                        egui::ScrollArea::vertical().max_height(110.0).show(ui, |ui| {
+                            for d in &report.details {
+                                ui.label(RichText::new(format!("• {}", d)).size(11.5).color(Color32::from_gray(190)));
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button(RichText::new(format!("{}  Generar / Renovar Respaldo", ic::SHIELD_CHECK)).color(Color32::from_rgb(100, 240, 150))).clicked() {
+                                do_gen_backup = true;
+                            }
+                            if ui.button(RichText::new(format!("{}  Restaurar data.win Limpio", ic::ARROWS_CLOCKWISE)).color(Color32::from_rgb(255, 200, 80))).clicked() {
+                                do_restore_vanilla = true;
+                            }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Cerrar").clicked() {
+                                    do_close = true;
+                                }
+                            });
+                        });
+                    });
+
+                if !is_open || do_close {
+                    self.show_integrity_modal = false;
+                }
+                if do_gen_backup {
+                    self.handle_generate_backup();
+                    self.integrity_report = Some(GameLauncher::check_integrity(&self.project.game_dir, &self.project.utmt_scripts_dir));
+                }
+                if do_restore_vanilla {
+                    self.handle_restore_vanilla_now();
+                }
+            }
+        }
     }
 }
 
@@ -765,47 +991,122 @@ impl FrickEditorApp {
             ui.add_space(8.0);
         }
 
-        // 2. HERO DASHBOARD: PLAY (ONE-CLICK LAUNCHER)
+        // 2. HERO DASHBOARD: CONMUTADOR DE PERFILES (ESTILO MINECRAFT FORGE / CURSEFORGE)
         egui::Frame::group(ui.style())
-            .fill(Color32::from_rgb(25, 30, 40))
+            .fill(Color32::from_rgb(22, 26, 35))
             .stroke(Stroke::new(1.2_f32, Color32::from_rgb(50, 75, 110)))
             .rounding(Rounding::same(8.0))
             .inner_margin(14.0)
             .show(ui, |ui| {
+                // Cabecera del Panel con perfil activo actual
                 ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new(format!("{}  PANEL DE JUEGO & INYECCIÓN SILENCIOSA", ic::ROCKET_LAUNCH))
-                                .size(16.5)
-                                .strong()
-                                .color(Color32::from_rgb(245, 165, 60)),
-                        );
-                        let active_count = self.mod_manager.get_active_mods().len();
-                        let total_count = self.mod_manager.installed_mods.len();
-                        ui.label(
-                            RichText::new(format!(
-                                "Selecciona qué animatrónicos estarán activos en tu partida. Al presionar PLAY, FrickEditor unifica el código, ejecuta UndertaleModTool silenciosamente y abre Five Nights at Frickbear's 3.\nAnimatrónicos seleccionados: {} de {}",
-                                active_count, total_count
-                            ))
-                            .size(12.0)
-                            .color(Color32::from_gray(175)),
-                        );
-                    });
+                    ui.label(
+                        RichText::new(format!("{}  LANZADOR CON PERFILES (ESTILO MINECRAFT)", ic::GAME_CONTROLLER))
+                            .size(16.5)
+                            .strong()
+                            .color(Color32::from_rgb(245, 165, 60)),
+                    );
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let play_btn = egui::Button::new(
-                            RichText::new(format!("{}  PLAY (One-Click Play)", ic::PLAY))
-                                .size(16.0)
-                                .strong()
-                                .color(Color32::WHITE),
-                        )
-                        .fill(Color32::from_rgb(225, 95, 20))
-                        .min_size(Vec2::new(230.0, 46.0));
+                    let (prof_name, prof_badge_bg, prof_badge_fg) = match self.active_profile {
+                        ActiveGameProfile::Vanilla => ("PERFIL ACTIVO: 🎮 VANILLA LIMPIO", Color32::from_rgb(20, 80, 45), Color32::from_rgb(120, 255, 170)),
+                        ActiveGameProfile::Modded => ("PERFIL ACTIVO: 🚀 MODDED (MURRAY & AMIGOS)", Color32::from_rgb(95, 45, 15), Color32::from_rgb(255, 185, 90)),
+                    };
 
-                        if ui.add(play_btn).clicked() {
-                            self.handle_one_click_play();
-                        }
-                    });
+                    egui::Frame::none()
+                        .fill(prof_badge_bg)
+                        .stroke(Stroke::new(1.0_f32, prof_badge_fg))
+                        .rounding(Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(prof_name).size(11.5).strong().color(prof_badge_fg));
+                        });
+                });
+
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Gestiona tu juego de forma 100% segura. Cambia entre el juego oficial sin mods o la versión con Murray & Amigos sin riesgo de corrupción acumulativa en data.win.")
+                        .size(12.0)
+                        .color(Color32::from_gray(180)),
+                );
+
+                ui.add_space(10.0);
+
+                // Dos tarjetas de perfil lado a lado:
+                ui.columns(2, |cols| {
+                    // Tarjeta 1: PERFIL VANILLA (JUEGO LIMPIO)
+                    egui::Frame::group(cols[0].style())
+                        .fill(Color32::from_rgb(18, 28, 24))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(40, 110, 70)))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(10.0)
+                        .show(&mut cols[0], |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{} Perfil Vanilla Limpio", ic::CHECK_CIRCLE)).size(14.0).strong().color(Color32::from_rgb(100, 240, 150)));
+                            });
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Restaura al instante data.win desde el respaldo intacto. Cero modificaciones, código 100% original de Five Nights at Frickbear's 3.").size(11.5).color(Color32::from_gray(175)));
+                            ui.add_space(8.0);
+
+                            let v_btn = egui::Button::new(
+                                RichText::new(format!("{}  Jugar Vanilla (Juego Limpio)", ic::GAME_CONTROLLER))
+                                    .size(13.5)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(25, 115, 65))
+                            .min_size(Vec2::new(ui.available_width(), 36.0));
+
+                            if ui.add(v_btn).on_hover_text("Restaura el data.win limpio y ejecuta el juego oficial").clicked() {
+                                self.handle_play_vanilla();
+                            }
+                        });
+
+                    // Tarjeta 2: PERFIL MODDED (MURRAY & AMIGOS)
+                    egui::Frame::group(cols[1].style())
+                        .fill(Color32::from_rgb(32, 24, 20))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(140, 75, 30)))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(10.0)
+                        .show(&mut cols[1], |ui| {
+                            let active_count = self.mod_manager.get_active_mods().len();
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{} Perfil Modded", ic::ROCKET_LAUNCH)).size(14.0).strong().color(Color32::from_rgb(255, 170, 70)));
+                                ui.label(RichText::new(format!("({} activos)", active_count)).size(12.0).color(Color32::from_rgb(255, 215, 120)));
+                            });
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Toma el data.win limpio como base e inyecta la suite de Murray y sus amigos. Inmune a mutaciones corruptas acumulativas.").size(11.5).color(Color32::from_gray(175)));
+                            ui.add_space(8.0);
+
+                            let m_btn = egui::Button::new(
+                                RichText::new(format!("{}  Jugar Modded (Murray & Amigos)", ic::ROCKET_LAUNCH))
+                                    .size(13.5)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(220, 95, 20))
+                            .min_size(Vec2::new(ui.available_width(), 36.0));
+
+                            if ui.add(m_btn).on_hover_text("Inyecta los mods activos sobre la base limpia y arranca el juego").clicked() {
+                                self.handle_play_modded();
+                            }
+                        });
+                });
+
+                ui.add_space(8.0);
+
+                // Barra Inferior de Utilidades de Seguridad (Respaldo, Integridad y Restauración)
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new(format!("{}  Generar Respaldo del data.win sin mods", ic::SHIELD_CHECK)).color(Color32::from_rgb(110, 225, 160))).on_hover_text("Crea o actualiza una copia intacta protegida data_vanilla.win").clicked() {
+                        self.handle_generate_backup();
+                    }
+
+                    if ui.button(RichText::new(format!("{}  Revisar Integridad de Archivos", ic::MAGNIFYING_GLASS)).color(Color32::from_rgb(110, 200, 255))).on_hover_text("Analiza hashes, tamaños y valida que la base esté libre de corrupción").clicked() {
+                        self.handle_check_integrity();
+                    }
+
+                    if ui.button(RichText::new(format!("{}  Restaurar data.win Limpio", ic::ARROWS_CLOCKWISE)).color(Color32::from_rgb(255, 200, 80))).on_hover_text("Restaura inmediatamente data.win desde el respaldo sin ejecutar el juego").clicked() {
+                        self.handle_restore_vanilla_now();
+                    }
                 });
             });
 
@@ -3910,7 +4211,8 @@ impl FrickEditorApp {
             }
 
             // Renderizar Objetos / Sprites Custom colocados con Registro Persistente
-            for c_obj in &self.project.custom_placed_objects {
+            let custom_props_list = self.project.custom_placed_objects.clone();
+            for c_obj in &custom_props_list {
                 if !c_obj.enabled || c_obj.target_room != cur_room_name {
                     continue;
                 }
@@ -4565,19 +4867,19 @@ impl FrickEditorApp {
                             // FILA DE COORDENADAS X, Y, Z Y MANIPULACIÓN 3D
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("Coordenada X:").strong().color(Color32::from_rgb(255, 120, 120)));
-                                if ui.add(egui::DragValue::new(&mut obj.x).speed(2.0).clamp_range(min_x..=max_x)).changed() {
+                                if ui.add(egui::DragValue::new(&mut obj.x).speed(2.0).range(min_x..=max_x)).changed() {
                                     data_changed = true;
                                 }
 
                                 ui.add_space(10.0);
                                 ui.label(RichText::new("Coordenada Y:").strong().color(Color32::from_rgb(120, 220, 120)));
-                                if ui.add(egui::DragValue::new(&mut obj.y).speed(2.0).clamp_range(min_y..=max_y)).changed() {
+                                if ui.add(egui::DragValue::new(&mut obj.y).speed(2.0).range(min_y..=max_y)).changed() {
                                     data_changed = true;
                                 }
 
                                 ui.add_space(10.0);
                                 ui.label(RichText::new("Elevación Z:").strong().color(Color32::from_rgb(100, 180, 255)));
-                                if ui.add(egui::DragValue::new(&mut obj.z).speed(1.0).clamp_range(-32.0..=128.0)).changed() {
+                                if ui.add(egui::DragValue::new(&mut obj.z).speed(1.0).range(-32.0..=128.0)).changed() {
                                     data_changed = true;
                                 }
 
@@ -4609,19 +4911,19 @@ impl FrickEditorApp {
                             // FILA DE DIMENSIONES, ROTACIÓN Y FÍSICA
                             ui.horizontal(|ui| {
                                 ui.label("Ancho:");
-                                if ui.add(egui::DragValue::new(&mut obj.width).speed(1.0).clamp_range(16.0..=256.0)).changed() {
+                                if ui.add(egui::DragValue::new(&mut obj.width).speed(1.0).range(16.0..=256.0)).changed() {
                                     data_changed = true;
                                 }
 
                                 ui.add_space(10.0);
                                 ui.label("Alto:");
-                                if ui.add(egui::DragValue::new(&mut obj.height).speed(1.0).clamp_range(16.0..=256.0)).changed() {
+                                if ui.add(egui::DragValue::new(&mut obj.height).speed(1.0).range(16.0..=256.0)).changed() {
                                     data_changed = true;
                                 }
 
                                 ui.add_space(10.0);
                                 ui.label("Rotación (°):");
-                                if ui.add(egui::DragValue::new(&mut obj.yaw).speed(2.0).clamp_range(0.0..=360.0)).changed() {
+                                if ui.add(egui::DragValue::new(&mut obj.yaw).speed(2.0).range(0.0..=360.0)).changed() {
                                     data_changed = true;
                                 }
 
@@ -4699,6 +5001,4 @@ impl FrickEditorApp {
                 }
             });
     }
-    }
-
 }

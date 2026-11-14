@@ -81,3 +81,26 @@ Para que un animatrónico custom funcione en Frickbear's 3 sin romper el juego o
 * **Manipulación 3D y 2D:** Permite controlar $X, Y, Z$ (elevación), ancho, alto y rotación tanto con sliders y valores numéricos como mediante clic y arrastre directo en el Plano Cenital 2D.
 * **Detección Anti-Colisión:** Valida en tiempo real que los objetos no se superpongan con paredes ni con `oInteractionBarrier` para evitar que el jugador o el animatrónico queden atascados.
 * **Exportador CSX:** Genera scripts de instalación versionados (`Instalar_CustomProps_V1.csx`, `V2`, etc.) para inyectar los objetos en las salas de `data.win` con UndertaleModTool.
+
+---
+
+## 7. Arquitectura de Perfiles y Blindaje de Integridad (Estilo Minecraft)
+
+### A. Conmutador de Perfiles: Vanilla Limpio vs. Modded
+1. **🎮 Perfil Vanilla (Juego Limpio):**
+   * Restaura instantáneamente el archivo `data.win` original a partir de la copia intacta protegida (`data_vanilla.win`).
+   * Abre `Frickbears3.exe` en su estado 100% oficial de fábrica, sin mods, sin scripts ni alteraciones.
+2. **🚀 Perfil Modded (Murray & Amigos):**
+   * Antes de cada inyección, **siempre restaura primero la base limpia de `data_vanilla.win`**.
+   * Sobre esa base limpia, inyecta los animatrónicos activos (Murray y futuros añadidos) y sus mapas 3D.
+   * **Invariante de Seguridad:** Al partir siempre de un `data.win` limpio, se elimina por completo el riesgo de **corrupción acumulativa** (bugs derivados de sobreescribir scripts encima de binarios previamente modificados).
+
+### B. Herramientas de Integridad y Respaldo de data.win
+* **🛡️ Generar Respaldo del data.win sin mods:** Crea o actualiza una copia intacta protegida `data_vanilla.win` (31,020,384 bytes). Si el usuario tenía respaldos previos de seguridad, los preserva automáticamente.
+* **🔍 Revisar Integridad de Archivos:** Modal de diagnóstico en tiempo real que audita:
+  * Presencia y tamaño del ejecutable principal (`Frickbears3.exe`).
+  * Estado de `data.win` (tamaño en bytes y perfil activo detectado).
+  * Verificación de la copia de respaldo `data_vanilla.win`.
+  * Detección y disponibilidad de UndertaleModTool.
+* **🔄 Restaurar data.win Limpio:** Permite volver a la versión vanilla sin mods con un solo clic, sin necesidad de ejecutar el juego.
+
