@@ -2444,9 +2444,9 @@ impl FrickEditorApp {
 
     fn reset_maze_player_spawn(&mut self) {
         let (x, y, yaw) = match self.selected_salvage_location {
-            SalvageLocationIndex::Location1Fnaf1 => (960.0, 224.0, 180.0),
+            SalvageLocationIndex::Location1Fnaf1 => (960.0, 224.0, 90.0),
             SalvageLocationIndex::Location2Fnaf2 => (1760.0, 336.0, 180.0),
-            SalvageLocationIndex::Location3Fnaf3 => (1280.0, 192.0, 180.0),
+            SalvageLocationIndex::Location3Fnaf3 => (1280.0, 192.0, 90.0),
             SalvageLocationIndex::Location4WilliamWoods => (752.0, 64.0, 90.0),
             SalvageLocationIndex::Location5SisterLocation => (1232.0, 1200.0, 270.0),
         };
@@ -2480,6 +2480,13 @@ impl FrickEditorApp {
 
     fn get_texture_for_instance(&mut self, ctx: &egui::Context, inst: &MazeRoomInstance, location: SalvageLocationIndex) -> Option<egui::TextureHandle> {
         let obj = &inst.object;
+        let cabinet_tex = match ((inst.x / 32).abs() + (inst.y / 32).abs()) % 4 {
+            0 => "sMazeTex_ArcadeCabinet_Freddy",
+            1 => "sMazeTex_ArcadeCabinet_Bonnie",
+            2 => "sMazeTex_ArcadeCabinet_Chica",
+            _ => "sMazeTex_ArcadeCabinet_Foxy",
+        };
+
         let tex_name = match location {
             SalvageLocationIndex::Location3Fnaf3 => {
                 if obj.contains("Wall_Vent") || obj.contains("VentSeal") || obj.contains("oMazeVent") {
@@ -2489,7 +2496,7 @@ impl FrickEditorApp {
                 } else if obj.contains("GiftBox") {
                     "sMazeTex_GiftBox"
                 } else if obj.contains("Arcade") {
-                    "sMazeTex_ArcadeCabinet_Freddy"
+                    cabinet_tex
                 } else if obj.contains("Floor_Concrete") {
                     "sMazeTex_FloorConcrete"
                 } else if obj.contains("Floor_Vent") {
@@ -2572,7 +2579,7 @@ impl FrickEditorApp {
                 } else if obj.contains("Table") {
                     "sMazeTex_OfficeTable"
                 } else if obj.contains("Arcade") {
-                    "sMazeTex_ArcadeCabinet_Freddy"
+                    cabinet_tex
                 } else if obj.contains("Balloons") {
                     "sMazeDecor_Balloons"
                 } else if obj.contains("PaperPals") {
@@ -2591,7 +2598,7 @@ impl FrickEditorApp {
             },
             SalvageLocationIndex::Location1Fnaf1 => {
                 if obj.contains("Arcade") {
-                    "sMazeTex_ArcadeCabinet_Freddy"
+                    cabinet_tex
                 } else if obj.contains("Poster") {
                     "sMazeDecor_PosterFreddy"
                 } else if obj.contains("Hatchet") {
@@ -2860,14 +2867,26 @@ impl FrickEditorApp {
 
                     if let Some(rd) = &active_room_data {
                         for inst in &rd.instances {
-                            if inst.object.contains("Wall") {
-                                let pad = 10.0_f32;
-                                let w = (inst.sx * 32.0).max(16.0);
-                                let h = (inst.sy * 32.0).max(16.0);
-                                let wx0 = inst.x as f32 - pad;
-                                let wx1 = inst.x as f32 + w + pad;
-                                let wy0 = inst.y as f32 - pad;
-                                let wy1 = inst.y as f32 + h + pad;
+                            if inst.object.contains("Invisible") { continue; }
+                            let is_obstacle = inst.object.contains("Wall")
+                                || inst.object.contains("Arcade")
+                                || inst.object.contains("Table")
+                                || inst.object.contains("Door")
+                                || inst.object.contains("Bed")
+                                || inst.object.contains("Sofa")
+                                || inst.object.contains("Shelf")
+                                || inst.object.contains("Dresser")
+                                || inst.object.contains("Counter")
+                                || inst.object.contains("Cupboard")
+                                || inst.object.contains("Oven");
+                            if is_obstacle {
+                                let pad = 12.0_f32;
+                                let hw = inst.sx * 16.0;
+                                let hh = inst.sy * 16.0;
+                                let wx0 = inst.x as f32 - hw - pad;
+                                let wx1 = inst.x as f32 + hw + pad;
+                                let wy0 = inst.y as f32 - hh - pad;
+                                let wy1 = inst.y as f32 + hh + pad;
                                 if target_x >= wx0 && target_x <= wx1 && self.maze_player_y >= wy0 && self.maze_player_y <= wy1 {
                                     blocked_x = true;
                                 }
@@ -2979,12 +2998,12 @@ impl FrickEditorApp {
                 SalvageLocationIndex::Location5SisterLocation => self.get_maze_texture(ctx, "sMazeTex_SLVentWall"),
             };
 
-            // Parámetros de Cámara y Perspectiva 1:1
+            // Parámetros de Cámara y Perspectiva 1:1 con GameMaker
             let horizon_y = rect.center().y;
             let rad = self.maze_player_yaw.to_radians();
             let cos_yaw = rad.cos();
             let sin_yaw = rad.sin();
-            let fov = 66.0_f32.to_radians();
+            let fov = 64.0_f32.to_radians(); // FOV 64 auténtico de oCamera3DMaze
             let half_fov_tan = (fov * 0.5).tan();
             let focal = (rect.width() * 0.5) / half_fov_tan;
 
@@ -3000,8 +3019,8 @@ impl FrickEditorApp {
 
             let flash_intensity = if self.salvage_flashlight { 1.0_f32 } else { 0.16_f32 };
 
-            // 1. TECHO EN PERSPECTIVA (Scanline Strips desde Y_min hasta horizon_y)
-            let ceil_strips = 16;
+            // 1. TECHO EN PERSPECTIVA 1:1 (Altura 80.0 unidades sobre la cámara: depth 128 - cam 48)
+            let ceil_strips = 18;
             let ceil_total_h = horizon_y - rect.min.y;
             for i in 0..ceil_strips {
                 let t0 = (i as f32 / ceil_strips as f32).powf(1.6);
@@ -3010,7 +3029,7 @@ impl FrickEditorApp {
                 let y1 = rect.min.y + (t1 * ceil_total_h);
                 let y_mid = (y0 + y1) * 0.5;
                 let dy = (horizon_y - y_mid).max(1.0);
-                let d = (72.0 * focal) / dy;
+                let d = (80.0 * focal) / dy; // 80 unidades reales
 
                 let depth_factor = (1.0 - (d / 650.0)).clamp(0.0, 1.0);
                 let brightness = (depth_factor * flash_intensity).clamp(0.08, 0.65);
@@ -3023,14 +3042,36 @@ impl FrickEditorApp {
 
                 let strip_rect = Rect::from_min_max(Pos2::new(rect.min.x, y0), Pos2::new(rect.max.x, y1));
                 if let Some(ct) = &tex_ceiling {
-                    let uv = Rect::from_min_max(Pos2::new(0.0, t0 * 3.0), Pos2::new(6.0, t1 * 3.0));
-                    painter.image(ct.id(), strip_rect, uv, col);
+                    let span_w = (rect.width() / focal) * d;
+                    let cx = self.maze_player_x + d * cos_yaw;
+                    let cy = self.maze_player_y + d * sin_yaw;
+                    let rx = -sin_yaw;
+                    let ry = cos_yaw;
+                    let lx = cx - 0.5 * span_w * rx;
+                    let ly = cy - 0.5 * span_w * ry;
+                    let rx_w = cx + 0.5 * span_w * rx;
+                    let ry_w = cy + 0.5 * span_w * ry;
+
+                    let mut mesh = egui::Mesh::with_texture(ct.id());
+                    let idx = mesh.vertices.len() as u32;
+                    let u_l = lx / 32.0;
+                    let v_l = ly / 32.0;
+                    let u_r = rx_w / 32.0;
+                    let v_r = ry_w / 32.0;
+
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.min.x, y0), uv: Pos2::new(u_l, v_l), color: col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.max.x, y0), uv: Pos2::new(u_r, v_r), color: col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.max.x, y1), uv: Pos2::new(u_r, v_r + 0.25), color: col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(rect.min.x, y1), uv: Pos2::new(u_l, v_l + 0.25), color: col });
+                    mesh.add_triangle(idx, idx + 1, idx + 2);
+                    mesh.add_triangle(idx, idx + 2, idx + 3);
+                    painter.add(egui::Shape::mesh(mesh));
                 } else {
                     painter.rect_filled(strip_rect, 0.0, col);
                 }
             }
 
-            // 2. SUELO EN PERSPECTIVA SUAVE Y REALISTA (Alineación 1:1 con GameMaker 36.0h)
+            // 2. SUELO EN PERSPECTIVA SUAVE Y REALISTA (Altura 48.0 unidades bajo la cámara)
             let floor_strips = 24;
             let floor_total_h = rect.max.y - horizon_y;
             for i in 0..floor_strips {
@@ -3040,7 +3081,7 @@ impl FrickEditorApp {
                 let y1 = horizon_y + (t1 * floor_total_h);
                 let y_mid = (y0 + y1) * 0.5;
                 let dy = (y_mid - horizon_y).max(1.0);
-                let d = (36.0 * focal) / dy;
+                let d = (48.0 * focal) / dy; // 48 unidades reales
 
                 let dist_bright = ((1.0 - (d / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
                 let col = Color32::from_rgba_unmultiplied(
@@ -3088,16 +3129,19 @@ impl FrickEditorApp {
                 }
             }
 
-            // 3. RECOLECCIÓN DE GEOMETRÍA 3D SÓLIDA CON RAYCASTING (100% LIBRE DE NIEVE Y POLÍGONOS SOLAPADOS)
+            // 3. RECOLECCIÓN DE GEOMETRÍA SÓLIDA CON CENTRADO REAL DE GAMEMAKER
             struct WallSegment {
                 x1: f32,
                 y1: f32,
                 x2: f32,
                 y2: f32,
                 len: f32,
+                h_top: f32,
+                h_bot: f32,
                 tex_id: Option<egui::TextureId>,
                 obj_name: String,
                 coords: (i32, i32),
+                face_type: u8, // 0: estándar, 1: arcade front, 2: arcade side
             }
 
             let mut wall_segments: Vec<WallSegment> = Vec::new();
@@ -3119,25 +3163,67 @@ impl FrickEditorApp {
                     if inst.object.contains("Invisible") {
                         continue;
                     }
-                    let is_wall = inst.object.contains("Wall");
-                    let w_w = (inst.sx * 32.0).max(16.0);
-                    let w_h = (inst.sy * 32.0).max(16.0);
-                    let x0 = inst.x as f32;
-                    let y0 = inst.y as f32;
 
-                    let tex = self.get_texture_for_instance(ctx, inst, self.selected_salvage_location)
-                        .or_else(|| if is_wall { tex_default_wall.clone().or_else(|| tex_wood.clone()) } else { None });
-                    let tex_id = tex.as_ref().map(|t| t.id());
+                    let obj = &inst.object;
+                    let is_wall = obj.contains("Wall");
+                    let is_arcade = obj.contains("Arcade");
+                    let is_table = obj.contains("Table");
+                    let is_door = obj.contains("Door");
+                    let is_counter = obj.contains("Counter") || obj.contains("Cupboard") || obj.contains("Oven");
+                    let is_bed = obj.contains("Bed") || obj.contains("Sofa");
+                    let is_shelf = obj.contains("Shelf") || obj.contains("Dresser") || obj.contains("PartsBox");
 
-                    if is_wall {
+                    if is_wall || is_arcade || is_table || is_door || is_counter || is_bed || is_shelf {
+                        // En GameMaker: (x, y) es el CENTRO del bloque
+                        let hw = inst.sx * 16.0;
+                        let hh = inst.sy * 16.0;
+                        let cx = inst.x as f32;
+                        let cy = inst.y as f32;
+                        let x0 = cx - hw;
+                        let x1 = cx + hw;
+                        let y0 = cy - hh;
+                        let y1 = cy + hh;
+
+                        let (h_top, h_bot) = if is_wall {
+                            (80.0_f32, 48.0_f32)
+                        } else if is_arcade {
+                            (32.0_f32, 48.0_f32) // Altura total 80: top 32 sobre cámara, bot 48 en suelo
+                        } else if is_door {
+                            (48.0_f32, 48.0_f32)
+                        } else if is_table {
+                            (-16.0_f32, 48.0_f32)
+                        } else if is_counter {
+                            (-12.0_f32, 48.0_f32)
+                        } else if is_bed {
+                            (-16.0_f32, 48.0_f32)
+                        } else if is_shelf {
+                            (16.0_f32, 48.0_f32)
+                        } else {
+                            (80.0_f32, 48.0_f32)
+                        };
+
+                        let tex = self.get_texture_for_instance(ctx, inst, self.selected_salvage_location)
+                            .or_else(|| if is_wall { tex_default_wall.clone().or_else(|| tex_wood.clone()) } else { None });
+                        let tex_id = tex.as_ref().map(|t| t.id());
                         let coords = (inst.x, inst.y);
-                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0 + w_w, y2: y0, len: w_w, tex_id, obj_name: inst.object.clone(), coords });
-                        wall_segments.push(WallSegment { x1: x0, y1: y0 + w_h, x2: x0 + w_w, y2: y0 + w_h, len: w_w, tex_id, obj_name: inst.object.clone(), coords });
-                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y0 + w_h, len: w_h, tex_id, obj_name: inst.object.clone(), coords });
-                        wall_segments.push(WallSegment { x1: x0 + w_w, y1: y0, x2: x0 + w_w, y2: y0 + w_h, len: w_h, tex_id, obj_name: inst.object.clone(), coords });
+                        let w_len = x1 - x0;
+                        let h_len = y1 - y0;
+
+                        // Para máquinas recreativas: Norte y Sur son laterales (face_type 2), Oeste es frontal (face_type 1)
+                        let (fnorth, fsouth, fwest, feast) = if is_arcade {
+                            (2, 2, 1, 0)
+                        } else {
+                            (0, 0, 0, 0)
+                        };
+
+                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x1, y2: y0, len: w_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fnorth });
+                        wall_segments.push(WallSegment { x1: x0, y1: y1, x2: x1, y2: y1, len: w_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fsouth });
+                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y1, len: h_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fwest });
+                        wall_segments.push(WallSegment { x1: x1, y1: y0, x2: x1, y2: y1, len: h_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: feast });
                     } else {
-                        let px = x0 + (w_w * 0.5);
-                        let py = y0 + (w_h * 0.5);
+                        // Billboards 2D planos reales (Cajas de regalo, marioneta, globos)
+                        let px = inst.x as f32;
+                        let py = inst.y as f32;
                         let dx = px - self.maze_player_x;
                         let dy = py - self.maze_player_y;
 
@@ -3146,25 +3232,17 @@ impl FrickEditorApp {
 
                         if pz > 8.0 && pz < 700.0 {
                             let screen_x = rect.center().x + (pcx / pz) * focal;
-                            let (prop_w_world, prop_h_world) = if inst.object.contains("Arcade") {
-                                (32.0_f32, 54.0_f32)
-                            } else if inst.object.contains("Door") {
-                                (36.0_f32, 70.0_f32)
-                            } else if inst.object.contains("Table") {
-                                (48.0_f32, 28.0_f32)
-                            } else if inst.object.contains("Bed") || inst.object.contains("Sofa") {
-                                (52.0_f32, 32.0_f32)
-                            } else if inst.object.contains("Dresser") || inst.object.contains("Shelf") {
-                                (36.0_f32, 48.0_f32)
-                            } else if inst.object.contains("Puppet") || inst.object.contains("GiftBox") {
+                            let (prop_w_world, prop_h_world) = if obj.contains("Puppet") || obj.contains("GiftBox") {
                                 (32.0_f32, 36.0_f32)
+                            } else if obj.contains("Balloons") {
+                                (24.0_f32, 48.0_f32)
                             } else {
-                                (32.0_f32, 36.0_f32)
+                                (28.0_f32, 32.0_f32)
                             };
 
                             let prop_w = (prop_w_world / pz) * focal;
                             let prop_h = (prop_h_world / pz) * focal;
-                            let ground_y = horizon_y + (36.0 / pz) * focal;
+                            let ground_y = horizon_y + (48.0 / pz) * focal;
 
                             let p_rect = Rect::from_min_max(
                                 Pos2::new(screen_x - (prop_w * 0.5), ground_y - prop_h),
@@ -3173,6 +3251,8 @@ impl FrickEditorApp {
 
                             let dist_shade = ((1.0 - (pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
                             let col = Color32::from_rgba_unmultiplied((255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, 255);
+                            let tex = self.get_texture_for_instance(ctx, inst, self.selected_salvage_location);
+                            let tex_id = tex.as_ref().map(|t| t.id());
 
                             props.push(PropBillboard {
                                 pz,
@@ -3181,7 +3261,7 @@ impl FrickEditorApp {
                                 rect: p_rect,
                                 col,
                                 tex_id,
-                                obj_name: inst.object.clone(),
+                                obj_name: obj.clone(),
                                 coords: (inst.x, inst.y),
                             });
                         }
@@ -3189,10 +3269,22 @@ impl FrickEditorApp {
                 }
             }
 
-            let num_rays = 200;
+            let num_rays = 240;
             let col_w = rect.width() / num_rays as f32;
             let mut z_buffer: Vec<f32> = vec![9999.0; num_rays];
             let mut targeted_object: Option<(String, f32, (i32, i32))> = None;
+
+            struct Hit {
+                dist: f32,
+                u: f32,
+                len: f32,
+                h_top: f32,
+                h_bot: f32,
+                tex_id: Option<egui::TextureId>,
+                obj_name: String,
+                coords: (i32, i32),
+                face_type: u8,
+            }
 
             for r in 0..num_rays {
                 let rel_x = (2.0 * r as f32 / num_rays as f32) - 1.0;
@@ -3200,11 +3292,7 @@ impl FrickEditorApp {
                 let rdx = ray_angle.cos();
                 let rdy = ray_angle.sin();
 
-                let mut closest_dist = 9999.0_f32;
-                let mut closest_u = 0.0_f32;
-                let mut closest_len = 32.0_f32;
-                let mut closest_tex_id = None;
-                let mut closest_meta = None;
+                let mut hits: Vec<Hit> = Vec::new();
 
                 for seg in &wall_segments {
                     let rxs = rdx * (seg.y2 - seg.y1) - rdy * (seg.x2 - seg.x1);
@@ -3214,41 +3302,79 @@ impl FrickEditorApp {
                     let t = (qpx * (seg.y2 - seg.y1) - qpy * (seg.x2 - seg.x1)) / rxs;
                     let u = (qpx * rdy - qpy * rdx) / rxs;
 
-                    if t > 0.1 && u >= 0.0 && u <= 1.0 && t < closest_dist {
-                        closest_dist = t;
-                        closest_u = u;
-                        closest_len = seg.len;
-                        closest_tex_id = seg.tex_id;
-                        closest_meta = Some((seg.obj_name.clone(), seg.coords));
+                    if t > 0.1 && u >= 0.0 && u <= 1.0 && t < 700.0 {
+                        hits.push(Hit {
+                            dist: t,
+                            u,
+                            len: seg.len,
+                            h_top: seg.h_top,
+                            h_bot: seg.h_bot,
+                            tex_id: seg.tex_id,
+                            obj_name: seg.obj_name.clone(),
+                            coords: seg.coords,
+                            face_type: seg.face_type,
+                        });
                     }
                 }
 
-                if closest_dist < 750.0 {
+                if hits.is_empty() {
+                    continue;
+                }
+
+                // El hit más cercano define la profundidad en z_buffer para billboards y retícula
+                if let Some(closest) = hits.iter().min_by(|a, b| a.dist.partial_cmp(&b.dist).unwrap()) {
                     let angle_diff = ray_angle - rad;
-                    let perp_dist = closest_dist * angle_diff.cos();
+                    let perp_dist = closest.dist * angle_diff.cos();
                     z_buffer[r] = perp_dist;
 
-                    let wall_h_top = 72.0_f32;
-                    let wall_h_bot = 36.0_f32;
-                    let y0 = horizon_y - (wall_h_top / perp_dist.max(1.0)) * focal;
-                    let y1 = horizon_y + (wall_h_bot / perp_dist.max(1.0)) * focal;
+                    if (r as i32 - num_rays as i32 / 2).abs() <= 2 {
+                        targeted_object = Some((closest.obj_name.clone(), perp_dist, closest.coords));
+                    }
+                }
+
+                // Ordenar de LEJOS a CERCA (Painter's algorithm):
+                // Paredes de fondo se dibujan primero; objetos en primer plano (recreativas, mesas)
+                // se dibujan encima sin ocluir el techo de fondo.
+                hits.sort_by(|a, b| b.dist.partial_cmp(&a.dist).unwrap_or(std::cmp::Ordering::Equal));
+
+                let angle_diff = ray_angle - rad;
+                let cos_diff = angle_diff.cos();
+                let angle_shade = cos_diff.powi(2).clamp(0.65, 1.0);
+                let col_x0 = rect.min.x + (r as f32 * col_w);
+                let col_x1 = rect.min.x + ((r + 1) as f32 * col_w);
+
+                for hit in hits {
+                    let perp_dist = hit.dist * cos_diff;
+                    let y0 = horizon_y - (hit.h_top / perp_dist.max(1.0)) * focal;
+                    let y1 = horizon_y + (hit.h_bot / perp_dist.max(1.0)) * focal;
 
                     let dist_shade = ((1.0 - (perp_dist / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
-                    let angle_shade = angle_diff.cos().powi(2).clamp(0.65, 1.0);
                     let total_shade = (dist_shade * angle_shade).clamp(0.10, 1.0);
                     let shade_u8 = (255.0 * total_shade) as u8;
                     let col = Color32::from_rgba_unmultiplied(shade_u8, shade_u8, shade_u8, 255);
 
-                    let col_x0 = rect.min.x + (r as f32 * col_w);
-                    let col_x1 = rect.min.x + ((r + 1) as f32 * col_w);
-                    let col_rect = Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1));
+                    let wall_pos = hit.u * hit.len;
+                    let (u0, u1) = match hit.face_type {
+                        1 => {
+                            // Frontal recreativa: pantalla y marquesina en [0.5, 1.0]
+                            let sub = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
+                            let base = 0.5 + (sub / 32.0) * 0.5;
+                            (base, base + (0.5 / 32.0))
+                        },
+                        2 => {
+                            // Lateral recreativa: ilustración del personaje en [0.0, 0.5]
+                            let sub = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
+                            let base = (sub / 32.0) * 0.5;
+                            (base, base + (0.5 / 32.0))
+                        },
+                        _ => {
+                            // Textura repetida cada 32 píxeles
+                            let tex_col = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
+                            (tex_col / 32.0, (tex_col + 1.0) / 32.0)
+                        }
+                    };
 
-                    let wall_pos = closest_u * closest_len;
-                    let tex_col = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
-                    let u0 = tex_col / 32.0;
-                    let u1 = (tex_col + 1.0) / 32.0;
-
-                    if let Some(tid) = closest_tex_id {
+                    if let Some(tid) = hit.tex_id {
                         let mut mesh = egui::Mesh::with_texture(tid);
                         let idx = mesh.vertices.len() as u32;
                         mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y0), uv: Pos2::new(u0, 0.0), color: col });
@@ -3259,13 +3385,7 @@ impl FrickEditorApp {
                         mesh.add_triangle(idx, idx + 2, idx + 3);
                         painter.add(egui::Shape::mesh(mesh));
                     } else {
-                        painter.rect_filled(col_rect, 0.0, col);
-                    }
-
-                    if (r as i32 - num_rays as i32 / 2).abs() <= 2 {
-                        if let Some((obj_name, coords)) = closest_meta {
-                            targeted_object = Some((obj_name, perp_dist, coords));
-                        }
+                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, col);
                     }
                 }
             }
@@ -3309,7 +3429,7 @@ impl FrickEditorApp {
                             let screen_x = rect.center().x + (acx / az) * focal;
                             let anim_w = (48.0_f32 / az) * focal;
                             let anim_h = (56.0_f32 / az) * focal;
-                            let ground_y = horizon_y + (36.0 / az.max(1.0)) * focal;
+                            let ground_y = horizon_y + (48.0 / az.max(1.0)) * focal;
                             let a_rect = Rect::from_min_max(
                                 Pos2::new(screen_x - (anim_w * 0.5), ground_y - anim_h),
                                 Pos2::new(screen_x + (anim_w * 0.5), ground_y)
@@ -3404,10 +3524,10 @@ impl FrickEditorApp {
                 if let Some(rd) = &active_room_data {
                     for inst in &rd.instances {
                         if inst.object.contains("Wall") {
-                            let p1 = to_radar(inst.x as f32, inst.y as f32);
-                            let w = (inst.sx * 32.0).max(16.0);
-                            let h = (inst.sy * 32.0).max(16.0);
-                            let p2 = to_radar(inst.x as f32 + w, inst.y as f32 + h);
+                            let hw = inst.sx * 16.0;
+                            let hh = inst.sy * 16.0;
+                            let p1 = to_radar(inst.x as f32 - hw, inst.y as f32 - hh);
+                            let p2 = to_radar(inst.x as f32 + hw, inst.y as f32 + hh);
                             painter.rect_filled(Rect::from_min_max(p1, p2), 1.0, Color32::from_rgb(0, 185, 230));
                         } else if inst.object.contains("Arcade") || inst.object.contains("Stage") || inst.object.contains("Carousel") {
                             let rp = to_radar(inst.x as f32, inst.y as f32);
