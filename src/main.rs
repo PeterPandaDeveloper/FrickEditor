@@ -98,6 +98,7 @@ struct FrickEditorApp {
     move_speed_multiplier: f32,
     radar_display_mode: usize,
     show_crosshair: bool,
+    show_audit_window: bool,
     // Debugger y Filtros de Entidades en Plano 2D
     dbg_filter_walls: bool,
     dbg_filter_props: bool,
@@ -171,6 +172,7 @@ impl FrickEditorApp {
             move_speed_multiplier: 1.0,
             radar_display_mode: 0,
             show_crosshair: true,
+            show_audit_window: false,
             dbg_filter_walls: true,
             dbg_filter_props: true,
             dbg_filter_interactive: true,
@@ -351,6 +353,20 @@ impl eframe::App for FrickEditorApp {
                             self.show_toast(format!("{} {}", ic::WARNING_CIRCLE, err), true);
                         }
                     }
+                }
+
+                ui.add_space(6.0);
+                let audit_header_btn = egui::Button::new(
+                    RichText::new(format!("{}  Auditoría & Notas", ic::FILE_TEXT))
+                        .size(13.0)
+                        .strong()
+                        .color(Color32::from_rgb(220, 245, 230)),
+                )
+                .fill(Color32::from_rgb(35, 75, 55))
+                .min_size(Vec2::new(150.0, 28.0));
+
+                if ui.add(audit_header_btn).on_hover_text("Ver qué se modificó en el juego, explicación de Phantoms/Puppet y auditoría de inyecciones").clicked() {
+                    self.show_audit_window = true;
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -644,6 +660,39 @@ impl eframe::App for FrickEditorApp {
                                 ui.label(RichText::new(msg).size(12.5).color(Color32::WHITE).strong());
                             });
                         });
+                });
+        }
+
+        // ==========================================================
+        // VENTANA MODAL FLOTANTE DE AUDITORÍA Y NOTA TÉCNICA
+        // ==========================================================
+        if self.show_audit_window {
+            egui::Window::new(RichText::new(format!("{}  Auditoría Técnica de Modificaciones (data.win)", ic::FILE_TEXT)).strong().size(14.0))
+                .default_width(720.0)
+                .default_height(520.0)
+                .resizable(true)
+                .open(&mut self.show_audit_window)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button(RichText::new(format!("{}  Abrir en Notepad", ic::ARROW_SQUARE_OUT)).color(Color32::from_rgb(100, 200, 255))).clicked() {
+                            let _ = GameLauncher::open_audit_note(&self.project.workspace_dir);
+                        }
+                        if ui.button(RichText::new(format!("{}  Abrir UndertaleModTool", ic::CODE)).color(Color32::from_rgb(255, 180, 80))).clicked() {
+                            let _ = GameLauncher::open_undertale_mod_tool(&self.project.utmt_scripts_dir, &self.project.game_dir);
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let audit_path = self.project.workspace_dir.join("AUDITORIA_MODIFICACIONES_GAME.md");
+                        let content = std::fs::read_to_string(&audit_path).unwrap_or_else(|_| {
+                            let alt = PathBuf::from("FrickEditor_GitHub_Repository/docs/AUDITORIA_MODIFICACIONES_GAME.md");
+                            std::fs::read_to_string(&alt).unwrap_or_else(|_| "No se pudo cargar la nota de auditoría.".to_string())
+                        });
+                        ui.label(RichText::new(content).monospace().size(12.0));
+                    });
                 });
         }
     }
@@ -2450,7 +2499,7 @@ impl FrickEditorApp {
                 } else if obj.contains("Table") {
                     "sMazeTex_OfficeTable"
                 } else {
-                    "sMazeWall"
+                    "sMazeTex_Wood"
                 }
             },
             SalvageLocationIndex::Location4WilliamWoods => {
@@ -2491,7 +2540,7 @@ impl FrickEditorApp {
                 } else if obj.contains("Window") {
                     "sMazeTex_Window"
                 } else {
-                    "sMazeWall_Trees"
+                    if inst.x > 900 { "sMazeWall_Trees" } else { "sMazeWall_HouseHallway" }
                 }
             },
             SalvageLocationIndex::Location5SisterLocation => {
@@ -2520,12 +2569,14 @@ impl FrickEditorApp {
                     "sMazeTex_GiftBox"
                 } else if obj.contains("Poster") || obj.contains("Sign") {
                     "sMazeDecor_PosterToys1"
-                } else if obj.contains("Wall_Tiles") {
-                    "sMazeWall_Tiles"
                 } else if obj.contains("Table") {
                     "sMazeTex_OfficeTable"
                 } else if obj.contains("Arcade") {
                     "sMazeTex_ArcadeCabinet_Freddy"
+                } else if obj.contains("Balloons") {
+                    "sMazeDecor_Balloons"
+                } else if obj.contains("PaperPals") {
+                    "sMazeDecor_PaperPals"
                 } else {
                     "sMazeWall_Tiles"
                 }
@@ -2536,19 +2587,21 @@ impl FrickEditorApp {
                 } else if obj.contains("Poster") {
                     "sMazeDecor_PosterFreddy"
                 } else if obj.contains("Hatchet") {
-                    "sMazeHatchet"
+                    "sMazeFloorDecoration_Hatchet"
                 } else if obj.contains("Door") {
                     "sMazeDoor"
                 } else if obj.contains("Table") {
                     "sMazeTex_OfficeTable"
-                } else if obj.contains("Wall_Tiles") {
-                    "sMazeWall_Tiles"
                 } else if obj.contains("Shelf") {
                     "sMazeTex_ShelfWall"
-                } else if obj.contains("Stage") {
-                    "sMazeWall"
+                } else if obj.contains("Speaker") {
+                    "sMazeTex_Speaker"
+                } else if obj.contains("Chair") {
+                    "sMazeTex_Chair"
+                } else if obj.contains("Flooring") || obj.contains("Floor") {
+                    "sMazeTex_Flooring"
                 } else {
-                    "sMazeWall"
+                    "sMazeWall_Tiles"
                 }
             },
         };
@@ -2903,13 +2956,13 @@ impl FrickEditorApp {
             // Cargar texturas del mapa para proyectar en 3D (1:1 con GameMaker)
             let tex_floor = match self.selected_salvage_location {
                 SalvageLocationIndex::Location1Fnaf1 | SalvageLocationIndex::Location2Fnaf2 => self.get_maze_texture(ctx, "sMazeTex_Flooring"),
-                SalvageLocationIndex::Location3Fnaf3 => self.get_maze_texture(ctx, "sMazeTex_FloorConcrete"),
+                SalvageLocationIndex::Location3Fnaf3 => self.get_maze_texture(ctx, "sMazeTex_Wood").or_else(|| self.get_maze_texture(ctx, "sMazeTex_FloorConcrete")),
                 SalvageLocationIndex::Location4WilliamWoods => self.get_maze_texture(ctx, "sMazeTex_FlooringPanels"),
-                SalvageLocationIndex::Location5SisterLocation => self.get_maze_texture(ctx, "sMazeTex_SLVentWall"),
+                SalvageLocationIndex::Location5SisterLocation => self.get_maze_texture(ctx, "sMazeTex_FloorConveyor").or_else(|| self.get_maze_texture(ctx, "sMazeTex_FloorConcrete")),
             };
             let tex_ceiling = self.get_maze_texture(ctx, "sMazeTex_Ceiling");
             let tex_wood = self.get_maze_texture(ctx, "sMazeTex_Wood");
-            let tex_default_wall = self.get_maze_texture(ctx, "sMazeWall");
+            let tex_default_wall = self.get_maze_texture(ctx, "sMazeWall_Tiles").or_else(|| self.get_maze_texture(ctx, "sMazeWall"));
 
             // Fondo y Niebla Profunda
             let horizon_y = rect.center().y - 10.0;
@@ -2951,8 +3004,8 @@ impl FrickEditorApp {
                 }
             }
 
-            // 2. SUELO EN PERSPECTIVA (Scanline Strips desde horizon_y hasta rect.max.y)
-            let floor_strips = 22;
+            // 2. SUELO EN PERSPECTIVA SUAVE Y REALISTA
+            let floor_strips = 24;
             let floor_total_h = rect.max.y - horizon_y;
             for i in 0..floor_strips {
                 let t0 = (i as f32 / floor_strips as f32).powf(1.8);
@@ -2970,7 +3023,12 @@ impl FrickEditorApp {
 
                 let strip_rect = Rect::from_min_max(Pos2::new(rect.min.x, y0), Pos2::new(rect.max.x, y1));
                 if let Some(ft) = &tex_floor {
-                    let uv = Rect::from_min_max(Pos2::new(0.0, t0 * 6.0), Pos2::new(8.0, t1 * 6.0));
+                    let u_off = (self.maze_player_x * 0.03125).fract();
+                    let v_off = (self.maze_player_y * 0.03125).fract();
+                    let uv = Rect::from_min_max(
+                        Pos2::new(u_off, v_off + (t0 * 5.0)),
+                        Pos2::new(u_off + 8.0, v_off + (t1 * 5.0))
+                    );
                     painter.image(ft.id(), strip_rect, uv, col);
                 } else {
                     let base_col = match self.selected_salvage_location {
@@ -2984,54 +3042,38 @@ impl FrickEditorApp {
                 }
             }
 
-            // 3. RECOLECCIÓN DE GEOMETRÍA 3D SÓLIDA (PAREDES Y PROPS 1:1)
+            // 3. RECOLECCIÓN DE GEOMETRÍA 3D SÓLIDA CON RAYCASTING (100% LIBRE DE NIEVE Y POLÍGONOS SOLAPADOS)
             let rad = self.maze_player_yaw.to_radians();
             let cos_yaw = rad.cos();
             let sin_yaw = rad.sin();
-            let focal = rect.width() * 0.9_f32;
-            let z_near = 6.0_f32;
+            let fov = 66.0_f32.to_radians();
+            let half_fov_tan = (fov * 0.5).tan();
+            let focal = (rect.width() * 0.5) / half_fov_tan;
 
-            struct ProjectedWall {
-                depth: f32,
-                p0: Pos2,
-                p1: Pos2,
-                p2: Pos2,
-                p3: Pos2,
-                col0: Color32,
-                col1: Color32,
+            struct WallSegment {
+                x1: f32,
+                y1: f32,
+                x2: f32,
+                y2: f32,
+                len: f32,
                 tex_id: Option<egui::TextureId>,
+                obj_name: String,
+                coords: (i32, i32),
             }
 
-            struct ProjectedProp {
-                depth: f32,
+            let mut wall_segments: Vec<WallSegment> = Vec::new();
+
+            struct PropBillboard {
+                pz: f32,
+                pcx: f32,
+                screen_x: f32,
                 rect: Rect,
                 col: Color32,
                 tex_id: Option<egui::TextureId>,
+                obj_name: String,
+                coords: (i32, i32),
             }
-
-            enum SceneItem {
-                Wall(ProjectedWall),
-                Prop(ProjectedProp),
-                Animatronic {
-                    depth: f32,
-                    rect: Rect,
-                    tex_id: egui::TextureId,
-                    coords: (i32, i32),
-                },
-            }
-
-            impl SceneItem {
-                fn depth(&self) -> f32 {
-                    match self {
-                        SceneItem::Wall(w) => w.depth,
-                        SceneItem::Prop(p) => p.depth,
-                        SceneItem::Animatronic { depth, .. } => *depth,
-                    }
-                }
-            }
-
-            let mut scene_items: Vec<SceneItem> = Vec::new();
-            let mut targeted_object = None;
+            let mut props: Vec<PropBillboard> = Vec::new();
 
             if let Some(rd) = &active_room_data {
                 for inst in &rd.instances {
@@ -3046,105 +3088,12 @@ impl FrickEditorApp {
                     let tex_id = tex.as_ref().map(|t| t.id());
 
                     if is_wall {
-                        // Generar caras de pared según orientación
-                        let mut faces: Vec<((f32, f32), (f32, f32), f32)> = Vec::new();
-                        if inst.sx >= inst.sy {
-                            faces.push(((x0, y0), (x0 + w_w, y0), w_w)); // Sur
-                            faces.push(((x0 + w_w, y0 + w_h), (x0, y0 + w_h), w_w)); // Norte
-                            if inst.sy > 0.8 {
-                                faces.push(((x0 + w_w, y0), (x0 + w_w, y0 + w_h), w_h)); // Este
-                                faces.push(((x0, y0 + w_h), (x0, y0), w_h)); // Oeste
-                            }
-                        } else {
-                            faces.push(((x0 + w_w, y0), (x0 + w_w, y0 + w_h), w_h)); // Este
-                            faces.push(((x0, y0 + w_h), (x0, y0), w_h)); // Oeste
-                            if inst.sx > 0.8 {
-                                faces.push(((x0, y0), (x0 + w_w, y0), w_w)); // Sur
-                                faces.push(((x0 + w_w, y0 + w_h), (x0, y0 + w_h), w_w)); // Norte
-                            }
-                        }
-
-                        for ((wx1, wy1), (wx2, wy2), wall_len) in faces {
-                            // Backface Culling
-                            let nx = -(wy2 - wy1);
-                            let ny = wx2 - wx1;
-                            let to_cam_x = self.maze_player_x - wx1;
-                            let to_cam_y = self.maze_player_y - wy1;
-                            if (nx * to_cam_x + ny * to_cam_y) <= 0.0 {
-                                continue;
-                            }
-
-                            // Subdividir paredes largas en slabs de 32 unidades para texturizado exacto 1:1
-                            let slabs = (wall_len / 32.0).round().max(1.0) as usize;
-                            for s in 0..slabs {
-                                let st0 = s as f32 / slabs as f32;
-                                let st1 = (s + 1) as f32 / slabs as f32;
-
-                                let sx_start = wx1 + (st0 * (wx2 - wx1));
-                                let sy_start = wy1 + (st0 * (wy2 - wy1));
-                                let sx_end = wx1 + (st1 * (wx2 - wx1));
-                                let sy_end = wy1 + (st1 * (wy2 - wy1));
-
-                                let dx1 = sx_start - self.maze_player_x;
-                                let dy1 = sy_start - self.maze_player_y;
-                                let dx2 = sx_end - self.maze_player_x;
-                                let dy2 = sy_end - self.maze_player_y;
-
-                                let mut z1 = dx1 * cos_yaw + dy1 * sin_yaw;
-                                let mut cx1 = -dx1 * sin_yaw + dy1 * cos_yaw;
-                                let mut z2 = dx2 * cos_yaw + dy2 * sin_yaw;
-                                let mut cx2 = -dx2 * sin_yaw + dy2 * cos_yaw;
-
-                                if z1 < z_near && z2 < z_near {
-                                    continue;
-                                }
-                                if z1 > 700.0 && z2 > 700.0 {
-                                    continue;
-                                }
-
-                                if z1 < z_near {
-                                    let t = (z_near - z1) / (z2 - z1);
-                                    cx1 += t * (cx2 - cx1);
-                                    z1 = z_near;
-                                } else if z2 < z_near {
-                                    let t = (z_near - z2) / (z1 - z2);
-                                    cx2 += t * (cx1 - cx2);
-                                    z2 = z_near;
-                                }
-
-                                let screen_x1 = rect.center().x + (cx1 / z1) * focal;
-                                let screen_x2 = rect.center().x + (cx2 / z2) * focal;
-
-                                let wall_h_world = 74.0_f32;
-                                let h1 = (wall_h_world / z1) * focal;
-                                let h2 = (wall_h_world / z2) * focal;
-
-                                let y_top1 = horizon_y - (h1 * 0.55);
-                                let y_bot1 = horizon_y + (h1 * 0.45);
-                                let y_top2 = horizon_y - (h2 * 0.55);
-                                let y_bot2 = horizon_y + (h2 * 0.45);
-
-                                let shade1 = ((1.0 - (z1 / 680.0)).clamp(0.04, 1.0) * flash_intensity).clamp(0.02, 1.0);
-                                let shade2 = ((1.0 - (z2 / 680.0)).clamp(0.04, 1.0) * flash_intensity).clamp(0.02, 1.0);
-
-                                let col0 = Color32::from_rgba_unmultiplied((255.0 * shade1) as u8, (255.0 * shade1) as u8, (255.0 * shade1) as u8, 255);
-                                let col1 = Color32::from_rgba_unmultiplied((255.0 * shade2) as u8, (255.0 * shade2) as u8, (255.0 * shade2) as u8, 255);
-
-                                let avg_depth = (z1 + z2) * 0.5;
-
-                                scene_items.push(SceneItem::Wall(ProjectedWall {
-                                    depth: avg_depth,
-                                    p0: Pos2::new(screen_x1, y_top1),
-                                    p1: Pos2::new(screen_x2, y_top2),
-                                    p2: Pos2::new(screen_x2, y_bot2),
-                                    p3: Pos2::new(screen_x1, y_bot1),
-                                    col0, col1,
-                                    tex_id,
-                                }));
-                            }
-                        }
+                        let coords = (inst.x, inst.y);
+                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0 + w_w, y2: y0, len: w_w, tex_id, obj_name: inst.object.clone(), coords });
+                        wall_segments.push(WallSegment { x1: x0, y1: y0 + w_h, x2: x0 + w_w, y2: y0 + w_h, len: w_w, tex_id, obj_name: inst.object.clone(), coords });
+                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y0 + w_h, len: w_h, tex_id, obj_name: inst.object.clone(), coords });
+                        wall_segments.push(WallSegment { x1: x0 + w_w, y1: y0, x2: x0 + w_w, y2: y0 + w_h, len: w_h, tex_id, obj_name: inst.object.clone(), coords });
                     } else {
-                        // Props, Billboards y Decoraciones 3D
                         let px = x0 + (w_w * 0.5);
                         let py = y0 + (w_h * 0.5);
                         let dx = px - self.maze_player_x;
@@ -3153,7 +3102,7 @@ impl FrickEditorApp {
                         let pz = dx * cos_yaw + dy * sin_yaw;
                         let pcx = -dx * sin_yaw + dy * cos_yaw;
 
-                        if pz > 8.0 && pz < 680.0 {
+                        if pz > 8.0 && pz < 700.0 {
                             let screen_x = rect.center().x + (pcx / pz) * focal;
                             let base_sz = 52.0_f32;
                             let scale = (base_sz / pz) * focal;
@@ -3175,25 +3124,127 @@ impl FrickEditorApp {
                             let shade = ((1.0 - (pz / 680.0)).clamp(0.04, 1.0) * flash_intensity).clamp(0.02, 1.0);
                             let col = Color32::from_rgba_unmultiplied((255.0 * shade) as u8, (255.0 * shade) as u8, (255.0 * shade) as u8, 255);
 
-                            // Detectar apuntado con retícula
-                            if pcx.abs() < (pz * 0.12) && pz < 280.0 {
-                                if targeted_object.as_ref().map(|(_, d, _)| pz < *d).unwrap_or(true) {
-                                    targeted_object = Some((inst.object.clone(), pz, (inst.x, inst.y)));
-                                }
-                            }
-
-                            scene_items.push(SceneItem::Prop(ProjectedProp {
-                                depth: pz,
+                            props.push(PropBillboard {
+                                pz,
+                                pcx,
+                                screen_x,
                                 rect: p_rect,
                                 col,
                                 tex_id,
-                            }));
+                                obj_name: inst.object.clone(),
+                                coords: (inst.x, inst.y),
+                            });
                         }
                     }
                 }
             }
 
-            // Animatrónico Custom (Si está habilitado en coordenadas)
+            let num_rays = 200;
+            let col_w = rect.width() / num_rays as f32;
+            let mut z_buffer: Vec<f32> = vec![9999.0; num_rays];
+            let mut targeted_object: Option<(String, f32, (i32, i32))> = None;
+
+            for r in 0..num_rays {
+                let rel_x = (2.0 * r as f32 / num_rays as f32) - 1.0;
+                let ray_angle = rad + (rel_x * half_fov_tan).atan();
+                let rdx = ray_angle.cos();
+                let rdy = ray_angle.sin();
+
+                let mut closest_dist = 9999.0_f32;
+                let mut closest_u = 0.0_f32;
+                let mut closest_len = 32.0_f32;
+                let mut closest_tex_id = None;
+                let mut closest_meta = None;
+
+                for seg in &wall_segments {
+                    let rxs = rdx * (seg.y2 - seg.y1) - rdy * (seg.x2 - seg.x1);
+                    if rxs.abs() < 1e-6 { continue; }
+                    let qpx = seg.x1 - self.maze_player_x;
+                    let qpy = seg.y1 - self.maze_player_y;
+                    let t = (qpx * (seg.y2 - seg.y1) - qpy * (seg.x2 - seg.x1)) / rxs;
+                    let u = (qpx * rdy - qpy * rdx) / rxs;
+
+                    if t > 0.1 && u >= 0.0 && u <= 1.0 && t < closest_dist {
+                        closest_dist = t;
+                        closest_u = u;
+                        closest_len = seg.len;
+                        closest_tex_id = seg.tex_id;
+                        closest_meta = Some((seg.obj_name.clone(), seg.coords));
+                    }
+                }
+
+                if closest_dist < 750.0 {
+                    let angle_diff = ray_angle - rad;
+                    let perp_dist = closest_dist * angle_diff.cos();
+                    z_buffer[r] = perp_dist;
+
+                    let wall_h_world = 74.0_f32;
+                    let wall_h_px = (wall_h_world / perp_dist.max(1.0)) * focal;
+                    let y0 = horizon_y - (wall_h_px * 0.55);
+                    let y1 = horizon_y + (wall_h_px * 0.45);
+
+                    let dist_shade = ((1.0 - (perp_dist / 620.0)).clamp(0.04, 1.0) * flash_intensity).clamp(0.02, 1.0);
+                    let angle_shade = angle_diff.cos().powi(2).clamp(0.5, 1.0);
+                    let total_shade = (dist_shade * angle_shade).clamp(0.02, 1.0);
+                    let shade_u8 = (255.0 * total_shade) as u8;
+                    let col = Color32::from_rgba_unmultiplied(shade_u8, shade_u8, shade_u8, 255);
+
+                    let col_x0 = rect.min.x + (r as f32 * col_w);
+                    let col_x1 = rect.min.x + ((r + 1) as f32 * col_w);
+                    let col_rect = Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1));
+
+                    let wall_pos = closest_u * closest_len;
+                    let u0 = ((wall_pos % 32.0) / 32.0).clamp(0.0, 1.0);
+                    let u1 = (((wall_pos + (col_w * (perp_dist / focal))) % 32.0) / 32.0).clamp(0.0, 1.0);
+
+                    if let Some(tid) = closest_tex_id {
+                        let mut mesh = egui::Mesh::with_texture(tid);
+                        let idx = mesh.vertices.len() as u32;
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y0), uv: Pos2::new(u0, 0.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y0), uv: Pos2::new(if u1 < u0 { 1.0 } else { u1 }, 0.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y1), uv: Pos2::new(if u1 < u0 { 1.0 } else { u1 }, 1.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y1), uv: Pos2::new(u0, 1.0), color: col });
+                        mesh.add_triangle(idx, idx + 1, idx + 2);
+                        mesh.add_triangle(idx, idx + 2, idx + 3);
+                        painter.add(egui::Shape::mesh(mesh));
+                    } else {
+                        painter.rect_filled(col_rect, 0.0, col);
+                    }
+
+                    if (r as i32 - num_rays as i32 / 2).abs() <= 2 {
+                        if let Some((obj_name, coords)) = closest_meta {
+                            targeted_object = Some((obj_name, perp_dist, coords));
+                        }
+                    }
+                }
+            }
+
+            // Dibujar Props respetando z_buffer
+            props.sort_by(|a, b| b.pz.partial_cmp(&a.pz).unwrap_or(std::cmp::Ordering::Equal));
+            for prop in props {
+                let ray_idx = ((prop.screen_x - rect.min.x) / col_w).round() as i32;
+                let occluded = if ray_idx >= 0 && (ray_idx as usize) < num_rays {
+                    prop.pz > (z_buffer[ray_idx as usize] + 16.0)
+                } else {
+                    false
+                };
+
+                if !occluded {
+                    if let Some(tid) = prop.tex_id {
+                        painter.image(tid, prop.rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), prop.col);
+                    } else {
+                        painter.rect_filled(prop.rect, 2.0, prop.col);
+                    }
+
+                    if prop.pcx.abs() < (prop.pz * 0.12) && prop.pz < 280.0 {
+                        if targeted_object.as_ref().map(|(_, d, _)| prop.pz < *d).unwrap_or(true) {
+                            targeted_object = Some((prop.obj_name.clone(), prop.pz, prop.coords));
+                        }
+                    }
+                }
+            }
+
+            // Animatrónico Custom (si está habilitado)
             if self.project.salvage_placement.enabled {
                 let sprite_opt = self.project.salvage_placement.salvage_sprite_path.clone();
                 if let Some(p) = &sprite_opt {
@@ -3210,65 +3261,30 @@ impl FrickEditorApp {
                             let ground_y = horizon_y + (scale * 0.45);
                             let a_rect = Rect::from_center_size(Pos2::new(screen_x, ground_y - (scale * 0.6)), Vec2::new(scale * 1.3, scale * 1.3));
 
-                            scene_items.push(SceneItem::Animatronic {
-                                depth: az,
-                                rect: a_rect,
-                                tex_id: tex.id(),
-                                coords: (self.project.salvage_placement.x, self.project.salvage_placement.y),
-                            });
-                        }
-                    }
-                }
-            }
+                            let ray_idx = ((screen_x - rect.min.x) / col_w).round() as i32;
+                            let occluded = if ray_idx >= 0 && (ray_idx as usize) < num_rays {
+                                az > (z_buffer[ray_idx as usize] + 20.0)
+                            } else {
+                                false
+                            };
 
-            // Ordenar de más lejano a más cercano (Algoritmo del Pintor)
-            scene_items.sort_by(|a, b| b.depth().partial_cmp(&a.depth()).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Dibujar cada elemento 3D sin wireframes ni artefactos
-            for item in scene_items {
-                match item {
-                    SceneItem::Wall(w) => {
-                        if let Some(tid) = w.tex_id {
-                            let mut mesh = egui::Mesh::with_texture(tid);
-                            let idx = mesh.vertices.len() as u32;
-                            mesh.vertices.push(egui::epaint::Vertex { pos: w.p0, uv: Pos2::new(0.0, 0.0), color: w.col0 });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: w.p1, uv: Pos2::new(1.0, 0.0), color: w.col1 });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: w.p2, uv: Pos2::new(1.0, 1.0), color: w.col1 });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: w.p3, uv: Pos2::new(0.0, 1.0), color: w.col0 });
-                            mesh.add_triangle(idx, idx + 1, idx + 2);
-                            mesh.add_triangle(idx, idx + 2, idx + 3);
-                            painter.add(egui::Shape::mesh(mesh));
-                        } else {
-                            painter.add(egui::Shape::convex_polygon(
-                                vec![w.p0, w.p1, w.p2, w.p3],
-                                w.col0,
-                                Stroke::NONE,
-                            ));
+                            if !occluded {
+                                painter.image(tex.id(), a_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                                painter.text(
+                                    Pos2::new(a_rect.center().x, a_rect.min.y - 12.0),
+                                    egui::Align2::CENTER_BOTTOM,
+                                    format!("Animatrónico ({}, {})", self.project.salvage_placement.x, self.project.salvage_placement.y),
+                                    egui::FontId::proportional(11.0),
+                                    Color32::YELLOW,
+                                );
+                            }
                         }
-                    },
-                    SceneItem::Prop(p) => {
-                        if let Some(tid) = p.tex_id {
-                            painter.image(tid, p.rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), p.col);
-                        } else {
-                            painter.rect_filled(p.rect, 2.0, p.col);
-                        }
-                    },
-                    SceneItem::Animatronic { rect: a_rect, tex_id, coords, .. } => {
-                        painter.image(tex_id, a_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-                        painter.text(
-                            Pos2::new(a_rect.center().x, a_rect.min.y - 12.0),
-                            egui::Align2::CENTER_BOTTOM,
-                            format!("Animatrónico ({}, {})", coords.0, coords.1),
-                            egui::FontId::proportional(11.0),
-                            Color32::YELLOW,
-                        );
                     }
                 }
             }
 
             // 4. LINTERNA Y AMBIENTE DE TERROR (SIN CÍRCULOS DIANA BRUSCOS)
             if self.salvage_flashlight {
-                // Viñeta periférica suave
                 let v_top = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, rect.min.y + 36.0));
                 let v_bot = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - 36.0), rect.max);
                 let v_left = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + 48.0, rect.max.y));
@@ -3278,12 +3294,7 @@ impl FrickEditorApp {
                 painter.rect_filled(v_bot, 0.0, edge_dark);
                 painter.rect_filled(v_left, 0.0, edge_dark);
                 painter.rect_filled(v_right, 0.0, edge_dark);
-
-                // Destello tenue en el centro de foco
-                painter.circle_filled(Pos2::new(rect.center().x, horizon_y), 240.0, Color32::from_rgba_unmultiplied(255, 250, 230, 8));
-                painter.circle_filled(Pos2::new(rect.center().x, horizon_y), 130.0, Color32::from_rgba_unmultiplied(255, 252, 235, 12));
             } else {
-                // Oscuridad total de horror
                 painter.rect_filled(rect, 4.0, Color32::from_rgba_unmultiplied(0, 0, 0, 238));
             }
 
