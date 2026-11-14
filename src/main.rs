@@ -9,7 +9,7 @@ use launcher::GameLauncher;
 use mod_manager::ModManager;
 use eframe::egui::{self, Color32, ColorImage, Pos2, Rect, RichText, Rounding, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use egui_phosphor::regular as ic;
-use models::{AnimatronicArchetype, AnimatronicProject, CameraRouteNode, CountermeasureType, MazeRoomData, SalvageLocationIndex};
+use models::{AnimatronicArchetype, AnimatronicProject, CameraRouteNode, CountermeasureType, MazeRoomData, MazeRoomInstance, SalvageLocationIndex};
 use rodio::{Decoder, OutputStream, Sink};
 use std::collections::HashMap;
 use std::fs::File;
@@ -2409,12 +2409,147 @@ impl FrickEditorApp {
     }
 
     fn get_maze_texture(&mut self, ctx: &egui::Context, tex_name: &str) -> Option<egui::TextureHandle> {
-        let path = PathBuf::from("assets/textures").join(format!("{}.png", tex_name));
-        if path.exists() {
-            self.get_or_load_tex(ctx, &path, 512)
-        } else {
-            None
+        let clean = tex_name.trim_end_matches(".png");
+        let candidates = [
+            PathBuf::from("assets/textures").join(format!("{}.png", clean)),
+            PathBuf::from("assets/textures").join(format!("{}_0.png", clean)),
+            PathBuf::from("assets/maze_textures").join(format!("{}.png", clean)),
+            PathBuf::from("assets/maze_textures").join(format!("{}_0.png", clean)),
+            PathBuf::from(r"D:\Frickbears-mod\Maze_Textures").join(format!("{}.png", clean)),
+            PathBuf::from(r"D:\Frickbears-mod\Maze_Textures").join(format!("{}_0.png", clean)),
+        ];
+
+        for path in &candidates {
+            if path.exists() {
+                if let Some(tex) = self.get_or_load_tex(ctx, path, 512) {
+                    return Some(tex);
+                }
+            }
         }
+        None
+    }
+
+    fn get_texture_for_instance(&mut self, ctx: &egui::Context, inst: &MazeRoomInstance, location: SalvageLocationIndex) -> Option<egui::TextureHandle> {
+        let obj = &inst.object;
+        let tex_name = match location {
+            SalvageLocationIndex::Location4WilliamWoods => {
+                if obj.contains("Wall_Trees") || obj.contains("Tree") {
+                    "sMazeWall_Trees"
+                } else if obj.contains("Fence") {
+                    "sMazeWall_Fence"
+                } else if obj.contains("HouseBedroom") || obj.contains("Bed") {
+                    "sMazeWall_HouseBedroom"
+                } else if obj.contains("HouseHallway") {
+                    "sMazeWall_HouseHallway"
+                } else if obj.contains("HouseExterior") {
+                    "sMazeWall_HouseExterior"
+                } else if obj.contains("HouseGarage") {
+                    "sMazeWall_HouseGarage"
+                } else if obj.contains("Curtain") {
+                    "sMazeWall_Curtain"
+                } else if obj.contains("Dresser") {
+                    "sMazeTex_Dresser2"
+                } else {
+                    "sMazeWall_Trees"
+                }
+            },
+            SalvageLocationIndex::Location5SisterLocation => {
+                if obj.contains("Scooping") {
+                    "sMazeWall_ScoopingRoom"
+                } else if obj.contains("Breaker") {
+                    "sMazeWall_BreakerRoom"
+                } else if obj.contains("CircusGallery") || obj.contains("CircusControls") {
+                    "sMazeTex_CircusGalleryC"
+                } else if obj.contains("Vent") {
+                    "sMazeTex_SLVentWall"
+                } else if obj.contains("Elevator") {
+                    "sMazeTex_Elevator"
+                } else if obj.contains("ControlModule") {
+                    "sMazeTex_ControlModule"
+                } else {
+                    "sMazeTex_SLVentWall"
+                }
+            },
+            _ => {
+                if obj.contains("Wall_Table") || obj.contains("OfficeTable") {
+                    "sMazeTex_OfficeTable"
+                } else if obj.contains("Wall_Vent") || obj.contains("Vent") {
+                    "sMazeTex_Vent"
+                } else if obj.contains("VentSeal") {
+                    "sMazeTex_VentSeal"
+                } else if obj.contains("Wall_Window") || obj.contains("Window") {
+                    "sMazeTex_Window"
+                } else if obj.contains("Wall_Shelf") || obj.contains("Shelf") {
+                    "sMazeTex_ShelfWall"
+                } else if obj.contains("Wall_Tiles") {
+                    "sMazeWall_Tiles"
+                } else if obj.contains("Wall_Stage") {
+                    "sTitleOutline_Stage"
+                } else if obj.contains("Wall_Dark") {
+                    "sMazeWall"
+                } else if obj.contains("Wall") {
+                    "sMazeTex_Wood"
+                } else if obj.contains("Door") {
+                    "sMazeDoor"
+                } else if obj.contains("Doorway") {
+                    "sTitleOutline_Doorway"
+                } else if obj.contains("Arcade") {
+                    "sMazeTex_ArcadeCabinet_Freddy"
+                } else if obj.contains("Puppet") {
+                    "sMazeTex_PuppetBox"
+                } else if obj.contains("GiftBox") {
+                    "sMazeTex_GiftBox"
+                } else if obj.contains("PartsBox") {
+                    "sMazeTex_PartsBox"
+                } else if obj.contains("BedThin") {
+                    "sMazeTex_BedThin"
+                } else if obj.contains("Bed") {
+                    "sMazeTex_Bed"
+                } else if obj.contains("Chair") {
+                    "sMazeTex_Chair"
+                } else if obj.contains("Sofa") {
+                    "sMazeTex_Sofa"
+                } else if obj.contains("Carousel") {
+                    "sMazeTex_CarouselHorse"
+                } else if obj.contains("Dresser") {
+                    "sMazeTex_Dresser2"
+                } else if obj.contains("Fridge") {
+                    "sMazeTex_Fridge"
+                } else if obj.contains("Oven") {
+                    "sMazeTex_Oven"
+                } else if obj.contains("KitchenCounter") {
+                    "sMazeTex_KitchenCounter"
+                } else if obj.contains("KitchenCupboard") {
+                    "sMazeTex_KitchenCupboard"
+                } else if obj.contains("MikeTV") {
+                    "sMazeTex_MikeTV"
+                } else if obj.contains("MonitorTiny") {
+                    "sMazeTex_MonitorTiny"
+                } else if obj.contains("Monitor") {
+                    "sMazeTex_Monitor"
+                } else if obj.contains("Speaker") {
+                    "sMazeTex_Speaker"
+                } else if obj.contains("Stairs") {
+                    "sTitleOutline_Stairs"
+                } else if obj.contains("Hatchet") {
+                    "sMazeHatchet"
+                } else if obj.contains("Poster") || obj.contains("Sign") {
+                    "sMazeDecor_OfficePosters"
+                } else if obj.contains("Papers") || obj.contains("Decoration") {
+                    "sMazeDecor_Papers"
+                } else if obj.contains("Marionette") {
+                    "sMazeTex_Marionette"
+                } else if obj.contains("Animatronic") || obj.contains("Enemy") {
+                    "sMazeFreddy"
+                } else if obj.contains("Barrier") || obj.contains("Escape") {
+                    "sMazeDecor_OutOfOrderSign"
+                } else {
+                    "sMazeTex_Wood"
+                }
+            }
+        };
+
+        self.get_maze_texture(ctx, tex_name)
     }
 
     // --------------------------------------------------------------
@@ -2758,21 +2893,15 @@ impl FrickEditorApp {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail_w, view_h), Sense::click());
             let painter = ui.painter_at(rect);
 
-            // Cargar texturas del mapa para proyectar en 3D
+            // Cargar texturas del mapa para proyectar en 3D (1:1 con GameMaker)
             let tex_floor = match self.selected_salvage_location {
                 SalvageLocationIndex::Location1Fnaf1 | SalvageLocationIndex::Location2Fnaf2 => self.get_maze_texture(ctx, "sMazeTex_Flooring"),
                 SalvageLocationIndex::Location3Fnaf3 => self.get_maze_texture(ctx, "sMazeTex_FloorConcrete"),
-                _ => self.get_maze_texture(ctx, "sMazeTex_SLVentWall"),
+                SalvageLocationIndex::Location4WilliamWoods => self.get_maze_texture(ctx, "sMazeTex_FlooringPanels"),
+                SalvageLocationIndex::Location5SisterLocation => self.get_maze_texture(ctx, "sMazeTex_SLVentWall"),
             };
+            let tex_ceiling = self.get_maze_texture(ctx, "sMazeTex_Ceiling");
             let tex_wood = self.get_maze_texture(ctx, "sMazeTex_Wood");
-            let tex_arcade = self.get_maze_texture(ctx, "sMazeTex_ArcadeCabinet_Freddy");
-            let tex_table = self.get_maze_texture(ctx, "sMazeTex_OfficeTable");
-            let tex_puppet = self.get_maze_texture(ctx, "sMazeTex_PuppetBox");
-            let tex_carousel = self.get_maze_texture(ctx, "sMazeTex_CarouselHorse_0");
-            let tex_elevator = self.get_maze_texture(ctx, "sMazeTex_Elevator");
-            let tex_bed = self.get_maze_texture(ctx, "sMazeTex_Bed");
-            let tex_hatchet = self.get_maze_texture(ctx, "sMazeHatchet");
-            let tex_poster = self.get_maze_texture(ctx, "sMazeDecor_PosterToyFreddy");
 
             // 1. Techo y Fondo Ambiental
             let sky_color = match self.selected_salvage_location {
@@ -2784,8 +2913,17 @@ impl FrickEditorApp {
             };
             painter.rect_filled(rect, 4.0, sky_color);
 
-            // 2. Plano del Suelo en Perspectiva (Mitad Inferior)
             let horizon_y = rect.center().y - 10.0;
+
+            // Dibujar textura de techo en la mitad superior
+            if let Some(ct) = &tex_ceiling {
+                let ceil_rect = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, horizon_y));
+                let uv_ceil = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(12.0, 6.0));
+                let ceil_alpha = if self.salvage_flashlight { 140 } else { 50 };
+                painter.image(ct.id(), ceil_rect, uv_ceil, Color32::from_rgba_unmultiplied(255, 255, 255, ceil_alpha));
+            }
+
+            // 2. Plano del Suelo en Perspectiva (Mitad Inferior)
             let floor_rect = Rect::from_min_max(Pos2::new(rect.min.x, horizon_y), rect.max);
             let floor_base_col = match self.selected_salvage_location {
                 SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(22, 18, 16),
@@ -2798,8 +2936,9 @@ impl FrickEditorApp {
 
             // Dibujar textura de baldosas repetidas en el suelo
             if let Some(ft) = &tex_floor {
+                let floor_alpha = if self.salvage_flashlight { 190 } else { 75 };
                 let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(14.0, 8.0));
-                painter.image(ft.id(), floor_rect, uv, Color32::from_rgba_unmultiplied(255, 255, 255, 60));
+                painter.image(ft.id(), floor_rect, uv, Color32::from_rgba_unmultiplied(255, 255, 255, floor_alpha));
             }
 
             // 3. Proyección 3D en Primera Persona de Entidades Cercanas
@@ -2852,7 +2991,7 @@ impl FrickEditorApp {
             visible_entities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
             // Dibujar cada entidad proyectada con su textura real del juego
-            for (depth, sx, sy, scale, inst) in visible_entities {
+            for (depth, sx, _sy, scale, inst) in visible_entities {
                 let shade = (1.0 - (depth / 680.0)).clamp(0.2, 1.0);
                 let col = Color32::from_rgba_unmultiplied(
                     (255.0 * shade) as u8,
@@ -2862,65 +3001,31 @@ impl FrickEditorApp {
                 );
 
                 let is_wall = inst.object.contains("Wall");
-                let is_arcade = inst.object.contains("Arcade");
-                let is_table = inst.object.contains("Table");
-                let is_puppet = inst.object.contains("PuppetBox");
-                let is_carousel = inst.object.contains("Carousel");
-                let is_elevator = inst.object.contains("Elevator");
-                let is_bed = inst.object.contains("Bed");
-                let is_hatchet = inst.object.contains("Hatchet");
-                let is_poster = inst.object.contains("Poster") || inst.object.contains("Sign");
+                let tex_opt = self.get_texture_for_instance(ctx, &inst, self.selected_salvage_location);
+                let ground_y = horizon_y + (scale * 0.45);
 
                 if is_wall {
-                    let w_w = scale.clamp(16.0, 240.0);
-                    let w_h = (scale * 1.6).clamp(24.0, 360.0);
-                    let w_rect = Rect::from_center_size(Pos2::new(sx, sy - (w_h * 0.35)), Vec2::new(w_w, w_h));
+                    let w_w = scale.clamp(20.0, 320.0);
+                    let w_h = (scale * 2.2).clamp(40.0, 520.0);
+                    let w_rect = Rect::from_center_size(Pos2::new(sx, ground_y - (w_h * 0.5)), Vec2::new(w_w, w_h));
 
-                    if let Some(wt) = &tex_wood {
+                    if let Some(t) = &tex_opt {
+                        painter.image(t.id(), w_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), col);
+                    } else if let Some(wt) = &tex_wood {
                         painter.image(wt.id(), w_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), col);
                     } else {
-                        painter.rect_filled(w_rect, 2.0, Color32::from_rgba_unmultiplied(60, 35, 25, (255.0 * shade) as u8));
+                        painter.rect_filled(w_rect, 2.0, Color32::from_rgba_unmultiplied(50, 32, 22, (255.0 * shade) as u8));
                     }
-                    painter.rect_stroke(w_rect, 2.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 0, 0, 120)));
+                    painter.rect_stroke(w_rect, 1.5, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(0, 0, 0, 140)));
                 } else {
-                    let p_sz = scale.clamp(14.0, 180.0);
-                    let p_rect = Rect::from_center_size(Pos2::new(sx, sy - (p_sz * 0.4)), Vec2::new(p_sz, p_sz));
+                    let p_w = scale.clamp(16.0, 240.0);
+                    let p_h = (scale * 1.6).clamp(24.0, 360.0);
+                    let p_rect = Rect::from_center_size(Pos2::new(sx, ground_y - (p_h * 0.5)), Vec2::new(p_w, p_h));
 
-                    let drawn_tex = if is_arcade {
-                        &tex_arcade
-                    } else if is_table {
-                        &tex_table
-                    } else if is_puppet {
-                        &tex_puppet
-                    } else if is_carousel {
-                        &tex_carousel
-                    } else if is_elevator {
-                        &tex_elevator
-                    } else if is_bed {
-                        &tex_bed
-                    } else if is_hatchet {
-                        &tex_hatchet
-                    } else if is_poster {
-                        &tex_poster
-                    } else {
-                        &None
-                    };
-
-                    if let Some(t) = drawn_tex {
+                    if let Some(t) = &tex_opt {
                         painter.image(t.id(), p_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), col);
-                    } else {
-                        painter.circle_filled(Pos2::new(sx, sy), p_sz * 0.35, Color32::from_rgba_unmultiplied(180, 100, 240, (230.0 * shade) as u8));
-                    }
-
-                    if depth < 200.0 {
-                        let short_obj = inst.object.replace("oMazeProp_", "").replace("oMazeWall_", "").replace("oMazeFloorDecoration_", "");
-                        painter.text(
-                            Pos2::new(sx, p_rect.min.y - 10.0),
-                            egui::Align2::CENTER_BOTTOM,
-                            short_obj,
-                            egui::FontId::monospace(10.0),
-                            Color32::from_rgb(255, 220, 100),
-                        );
+                    } else if let Some(wt) = &tex_wood {
+                        painter.image(wt.id(), p_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), col);
                     }
                 }
             }
@@ -2963,14 +3068,14 @@ impl FrickEditorApp {
                 }
             }
 
-            // 4. Efecto de Linterna Volumétrica
+            // 4. Efecto de Linterna Volumétrica & Iluminación Ambiental
             if self.salvage_flashlight {
                 let spot_center = Pos2::new(rect.center().x, horizon_y + 10.0);
-                painter.circle_filled(spot_center, 240.0, Color32::from_rgba_unmultiplied(255, 245, 200, 22));
-                painter.circle_filled(spot_center, 150.0, Color32::from_rgba_unmultiplied(255, 250, 210, 35));
-                painter.circle_filled(spot_center, 80.0, Color32::from_rgba_unmultiplied(255, 255, 225, 48));
+                painter.circle_filled(spot_center, 320.0, Color32::from_rgba_unmultiplied(255, 248, 220, 10));
+                painter.circle_filled(spot_center, 200.0, Color32::from_rgba_unmultiplied(255, 250, 225, 16));
+                painter.circle_filled(spot_center, 100.0, Color32::from_rgba_unmultiplied(255, 255, 235, 24));
             } else {
-                painter.rect_filled(rect, 4.0, Color32::from_rgba_unmultiplied(0, 0, 0, 235));
+                painter.rect_filled(rect, 4.0, Color32::from_rgba_unmultiplied(0, 0, 0, 242));
             }
 
             // 5. Retícula Central (Crosshair) & Indicador de Inspección
