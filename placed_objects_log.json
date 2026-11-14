@@ -1,0 +1,17 @@
+[
+  {
+    "id": "prop_murray_stage_1",
+    "name": "Murray Moose (Escenario 3D)",
+    "target_room": "MinigameMaze_1",
+    "sprite_path": null,
+    "x": 608.0,
+    "y": 140.0,
+    "z": 32.0,
+    "width": 64.0,
+    "height": 96.0,
+    "yaw": 0.0,
+    "is_solid": true,
+    "gml_object": "oInteraction_Animatronic",
+    "enabled": true
+  }
+]

@@ -317,6 +317,8 @@ pub struct AnimatronicProject {
     // --- Mecánicas Avanzadas, Cámaras y Entornos 3D ---
     pub advanced: AdvancedMechanicsConfig,
     pub salvage_placement: CustomSalvagePlacement,
+    #[serde(default)]
+    pub custom_placed_objects: Vec<PlacedCustomObject>,
 }
 
 /// Nodos de ruta en el mapa de cámaras (MainLocationMap)
@@ -445,6 +447,44 @@ impl Default for CustomSalvagePlacement {
     }
 }
 
+/// Objeto o sprite personalizado colocado por el usuario en el entorno 3D / 2D con registro persistente
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PlacedCustomObject {
+    pub id: String,                  // Identificador único
+    pub name: String,                // Nombre visible, ej. "Mi Murray 3D" o "Decoración Custom"
+    pub target_room: String,         // "MinigameMaze_1", "MinigameMaze_2", etc.
+    pub sprite_path: Option<PathBuf>,// Ruta al archivo .PNG del sprite
+    pub x: f32,                      // Coordenada X
+    pub y: f32,                      // Coordenada Y
+    pub z: f32,                      // Coordenada Z (0 = suelo, 32 = escenario/mesa, o personalizada)
+    pub width: f32,                  // Ancho en mundo 3D (por defecto 48.0 a 64.0)
+    pub height: f32,                 // Alto en mundo 3D (por defecto 56.0 a 96.0)
+    pub yaw: f32,                    // Rotación
+    pub is_solid: bool,              // Si tiene colisión en GameMaker
+    pub gml_object: String,          // "oInteraction_Animatronic", "oMazeProp_Custom", "oInteractionPoint", etc.
+    pub enabled: bool,
+}
+
+impl Default for PlacedCustomObject {
+    fn default() -> Self {
+        Self {
+            id: format!("custom_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()),
+            name: "Nuevo Objeto / Animatrónico".to_string(),
+            target_room: "MinigameMaze_1".to_string(),
+            sprite_path: None,
+            x: 608.0,
+            y: 300.0,
+            z: 0.0,
+            width: 48.0,
+            height: 64.0,
+            yaw: 0.0,
+            is_solid: false,
+            gml_object: "oInteraction_Animatronic".to_string(),
+            enabled: true,
+        }
+    }
+}
+
 /// Instancia real extraída de las salas de GameMaker (MinigameMaze 1 a 5)
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MazeRoomInstance {
@@ -532,6 +572,7 @@ impl Default for AnimatronicProject {
             sound_jumpscare: auto_file("murray_jumpscare.ogg"),
             advanced: AdvancedMechanicsConfig::default(),
             salvage_placement: CustomSalvagePlacement::default(),
+            custom_placed_objects: Vec::new(),
         }
     }
 }
