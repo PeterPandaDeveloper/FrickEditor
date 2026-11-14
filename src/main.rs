@@ -2470,7 +2470,7 @@ impl FrickEditorApp {
 
         for path in &candidates {
             if path.exists() {
-                if let Some(tex) = self.get_or_load_tex(ctx, path, 512) {
+                if let Some(tex) = self.get_or_load_tex(ctx, path, 2048) {
                     return Some(tex);
                 }
             }
@@ -2487,20 +2487,84 @@ impl FrickEditorApp {
             _ => "sMazeTex_ArcadeCabinet_Foxy",
         };
 
+        if obj.contains("Arcade") {
+            return self.get_maze_texture(ctx, cabinet_tex);
+        }
+        if obj == "oMazeWall_Table" {
+            return self.get_maze_texture(ctx, "sMazeTex_TableCloth");
+        }
+        if obj == "oMazeWall_OfficeTable" {
+            return self.get_maze_texture(ctx, "sMazeTex_OfficeTable");
+        }
+        if obj.contains("Stage") {
+            return self.get_maze_texture(ctx, "sMazeTex_Wood");
+        }
+        if obj.contains("PiratesCove") || obj.contains("Curtain") {
+            return self.get_maze_texture(ctx, "sMazeWall_Curtain");
+        }
+        if obj.contains("Chair") {
+            return self.get_maze_texture(ctx, "sMazeTex_Chair");
+        }
+        if obj.contains("Shelf") {
+            return self.get_maze_texture(ctx, "sMazeTex_ShelfWall");
+        }
+        if obj.contains("Speaker") {
+            return self.get_maze_texture(ctx, "sMazeTex_Speaker");
+        }
+        if obj.contains("Door") {
+            return self.get_maze_texture(ctx, "sMazeDoor");
+        }
+        if obj.contains("Hatchet") {
+            return self.get_maze_texture(ctx, "sMazeFloorDecoration_Hatchet");
+        }
+        if obj.contains("Flooring") || obj.contains("Floor") {
+            return self.get_maze_texture(ctx, "sMazeTex_Flooring");
+        }
+
         let tex_name = match location {
+            SalvageLocationIndex::Location1Fnaf1 => {
+                if obj.contains("Poster") {
+                    "sMazeDecor_PosterFreddy"
+                } else if obj.contains("Table") {
+                    "sMazeTex_TableCloth"
+                } else {
+                    "sMazeWall_Tiles"
+                }
+            },
+            SalvageLocationIndex::Location2Fnaf2 => {
+                if obj.contains("Carousel") {
+                    "sMazeTex_CarouselHorse"
+                } else if obj.contains("Puppet") {
+                    "sMazeTex_PuppetBox"
+                } else if obj.contains("GiftBox") {
+                    "sMazeTex_GiftBox"
+                } else if obj.contains("Poster") || obj.contains("Sign") {
+                    "sMazeDecor_PosterToys1"
+                } else if obj.contains("Table") {
+                    "sMazeTex_TableCloth"
+                } else if obj.contains("Balloons") {
+                    "sMazeDecor_Balloons"
+                } else if obj.contains("PaperPals") {
+                    "sMazeDecor_PaperPals"
+                } else if obj.contains("MonitorTiny") {
+                    "sMazeTex_MonitorTiny"
+                } else if obj.contains("Monitor") {
+                    "sMazeTex_Monitor"
+                } else if obj.contains("Marionette") {
+                    "sMazeTex_Marionette"
+                } else if obj.contains("Vent") {
+                    "sMazeWall_Vent"
+                } else {
+                    "sMazeWall"
+                }
+            },
             SalvageLocationIndex::Location3Fnaf3 => {
-                if obj.contains("Wall_Vent") || obj.contains("VentSeal") || obj.contains("oMazeVent") {
+                if obj.contains("Wall_Vent") || obj.contains("VentSeal") || obj.contains("oMazeVent") || obj.contains("Vent") {
                     "sMazeWall_Vent"
                 } else if obj.contains("PartsBox") {
                     "sMazeTex_PartsBox"
                 } else if obj.contains("GiftBox") {
                     "sMazeTex_GiftBox"
-                } else if obj.contains("Arcade") {
-                    cabinet_tex
-                } else if obj.contains("Floor_Concrete") {
-                    "sMazeTex_FloorConcrete"
-                } else if obj.contains("Floor_Vent") {
-                    "sMazeTex_SLVentWall"
                 } else if obj.contains("Sign") || obj.contains("Poster") {
                     "sMazeDecor_OfficePosters"
                 } else if obj.contains("Table") {
@@ -2524,20 +2588,10 @@ impl FrickEditorApp {
                     "sMazeWall_HouseGarage"
                 } else if obj.contains("HouseLivingRoom") {
                     "sMazeWall_HouseLivingRoom"
-                } else if obj.contains("Curtain") {
-                    "sMazeWall_Curtain"
-                } else if obj.contains("BedThin") {
-                    "sMazeTex_BedThin"
-                } else if obj.contains("Bed") {
-                    "sMazeTex_Bed"
-                } else if obj.contains("Dresser") {
-                    "sMazeTex_Dresser2"
                 } else if obj.contains("MikeTV") {
                     "sMazeTex_MikeTV"
                 } else if obj.contains("Sofa") {
                     "sMazeTex_Sofa"
-                } else if obj.contains("Chair") {
-                    "sMazeTex_Chair"
                 } else if obj.contains("Fridge") {
                     "sMazeTex_Fridge"
                 } else if obj.contains("Oven") {
@@ -2565,58 +2619,6 @@ impl FrickEditorApp {
                     "sMazeDecor_Scooper"
                 } else {
                     "sMazeTex_SLVentWall"
-                }
-            },
-            SalvageLocationIndex::Location2Fnaf2 => {
-                if obj.contains("Carousel") {
-                    "sMazeTex_CarouselHorse"
-                } else if obj.contains("Puppet") {
-                    "sMazeTex_PuppetBox"
-                } else if obj.contains("GiftBox") {
-                    "sMazeTex_GiftBox"
-                } else if obj.contains("Poster") || obj.contains("Sign") {
-                    "sMazeDecor_PosterToys1"
-                } else if obj.contains("Table") {
-                    "sMazeTex_OfficeTable"
-                } else if obj.contains("Arcade") {
-                    cabinet_tex
-                } else if obj.contains("Balloons") {
-                    "sMazeDecor_Balloons"
-                } else if obj.contains("PaperPals") {
-                    "sMazeDecor_PaperPals"
-                } else if obj.contains("MonitorTiny") {
-                    "sMazeTex_MonitorTiny"
-                } else if obj.contains("Monitor") {
-                    "sMazeTex_Monitor"
-                } else if obj.contains("Marionette") {
-                    "sMazeTex_Marionette"
-                } else if obj.contains("Vent") {
-                    "sMazeWall_Vent"
-                } else {
-                    "sMazeWall"
-                }
-            },
-            SalvageLocationIndex::Location1Fnaf1 => {
-                if obj.contains("Arcade") {
-                    cabinet_tex
-                } else if obj.contains("Poster") {
-                    "sMazeDecor_PosterFreddy"
-                } else if obj.contains("Hatchet") {
-                    "sMazeFloorDecoration_Hatchet"
-                } else if obj.contains("Door") {
-                    "sMazeDoor"
-                } else if obj.contains("Table") {
-                    "sMazeTex_OfficeTable"
-                } else if obj.contains("Shelf") {
-                    "sMazeTex_ShelfWall"
-                } else if obj.contains("Speaker") {
-                    "sMazeTex_Speaker"
-                } else if obj.contains("Chair") {
-                    "sMazeTex_Chair"
-                } else if obj.contains("Flooring") || obj.contains("Floor") {
-                    "sMazeTex_Flooring"
-                } else {
-                    "sMazeWall_Tiles"
                 }
             },
         };
@@ -2703,66 +2705,78 @@ impl FrickEditorApp {
                 match self.selected_salvage_location {
                     SalvageLocationIndex::Location1Fnaf1 => {
                         if ui.button("🎭 Escenario").on_hover_text("Viajar al Show Stage (Freddy, Bonnie, Chica)").clicked() {
-                            self.teleport_player(960.0, 224.0, 180.0, "Escenario Principal");
+                            self.teleport_player(608.0, 260.0, 270.0, "Escenario Principal");
                         }
                         if ui.button("🍕 Comedor").on_hover_text("Viajar al Salón de Comedor y Mesas").clicked() {
-                            self.teleport_player(720.0, 480.0, 180.0, "Salón de Comedor");
+                            self.teleport_player(608.0, 450.0, 270.0, "Salón de Comedor");
                         }
                         if ui.button("🦊 Pirate Cove").on_hover_text("Viajar a la Guarida del Pirata (Foxy)").clicked() {
-                            self.teleport_player(420.0, 360.0, 90.0, "Guarida del Pirata");
+                            self.teleport_player(240.0, 560.0, 180.0, "Guarida del Pirata");
                         }
                         if ui.button("🚪 Pasillo Oeste").on_hover_text("Viajar al Pasillo Oeste y Almacén").clicked() {
-                            self.teleport_player(360.0, 680.0, 180.0, "Pasillo Oeste");
+                            self.teleport_player(344.0, 750.0, 270.0, "Pasillo Oeste");
                         }
                         if ui.button("🖥️ Oficina").on_hover_text("Viajar a la Oficina del Guardia").clicked() {
-                            self.teleport_player(640.0, 960.0, 0.0, "Oficina de Seguridad");
+                            self.teleport_player(608.0, 850.0, 90.0, "Oficina de Seguridad");
                         }
                     },
                     SalvageLocationIndex::Location2Fnaf2 => {
+                        if ui.button("🎭 Escenario").on_hover_text("Viajar al Escenario de los Toy Animatronics").clicked() {
+                            self.teleport_player(1424.0, 180.0, 270.0, "Escenario Toy");
+                        }
                         if ui.button("🎁 Prize Corner").on_hover_text("Viajar a la Zona de Regalos y Caja de Puppet").clicked() {
-                            self.teleport_player(1760.0, 336.0, 180.0, "Prize Corner (Puppet Box)");
+                            self.teleport_player(296.0, 320.0, 270.0, "Prize Corner (Puppet Box)");
                         }
                         if ui.button("🎠 Carrusel").on_hover_text("Viajar a la Zona del Carrusel").clicked() {
                             self.teleport_player(1232.0, 624.0, 270.0, "Zona del Carrusel");
                         }
                         if ui.button("🎉 Party Rooms").on_hover_text("Viajar a las Salas de Fiesta").clicked() {
-                            self.teleport_player(540.0, 450.0, 90.0, "Salas de Fiesta");
+                            self.teleport_player(800.0, 450.0, 270.0, "Salas de Fiesta");
                         }
-                        if ui.button("🚪 Pasillo Central").on_hover_text("Viajar al Pasillo Central").clicked() {
-                            self.teleport_player(960.0, 520.0, 180.0, "Pasillo Central");
+                        if ui.button("🦊 Kids Cove").on_hover_text("Viajar a Kids Cove (Mangle)").clicked() {
+                            self.teleport_player(760.0, 200.0, 270.0, "Kids Cove (Mangle)");
                         }
                     },
                     SalvageLocationIndex::Location3Fnaf3 => {
-                        if ui.button("🟢 Pasillo Fright").on_hover_text("Viajar al Pasillo Principal de Fazbear's Fright").clicked() {
-                            self.teleport_player(1280.0, 192.0, 180.0, "Pasillo de Fazbear's Fright");
+                        if ui.button("🟢 Springtrap").on_hover_text("Viajar a la Sala de Springtrap").clicked() {
+                            self.teleport_player(1232.0, 220.0, 270.0, "Atracción de Springtrap");
+                        }
+                        if ui.button("🚪 Pasillo Principal").on_hover_text("Viajar al Pasillo Principal de Fazbear's Fright").clicked() {
+                            self.teleport_player(1032.0, 500.0, 270.0, "Pasillo Fazbear's Fright");
                         }
                         if ui.button("💨 Ventilaciones").on_hover_text("Viajar a los Conductos de Ventilación").clicked() {
                             self.teleport_player(1150.0, 720.0, 0.0, "Conductos de Ventilación");
                         }
                         if ui.button("📦 Desguace").on_hover_text("Viajar al Almacén de Desguace").clicked() {
-                            self.teleport_player(420.0, 350.0, 90.0, "Almacén de Desguace");
+                            self.teleport_player(824.0, 350.0, 270.0, "Almacén de Desguace");
                         }
                     },
                     SalvageLocationIndex::Location4WilliamWoods => {
-                        if ui.button("🛏️ Habitación").on_hover_text("Viajar a la Habitación Principal (Bed & Dresser)").clicked() {
-                            self.teleport_player(752.0, 64.0, 90.0, "Habitación Principal");
-                        }
                         if ui.button("🌲 Bosque Sombrío").on_hover_text("Viajar al Exterior entre los Árboles").clicked() {
-                            self.teleport_player(1600.0, 800.0, 180.0, "Bosque Sombrío");
+                            self.teleport_player(1200.0, 500.0, 90.0, "Bosque Sombrío");
                         }
-                        if ui.button("🚗 Carretera").on_hover_text("Viajar a la Carretera Nocturna").clicked() {
-                            self.teleport_player(1850.0, 1400.0, 270.0, "Carretera Nocturna");
+                        if ui.button("🏠 Casa de William").on_hover_text("Viajar a la Residencia Afton").clicked() {
+                            self.teleport_player(600.0, 450.0, 270.0, "Casa de William");
+                        }
+                        if ui.button("🛏️ Dormitorio").on_hover_text("Viajar al Dormitorio (Bed & Dresser)").clicked() {
+                            self.teleport_player(312.0, 768.0, 180.0, "Dormitorio");
                         }
                     },
                     SalvageLocationIndex::Location5SisterLocation => {
-                        if ui.button("🕹️ Módulo Control").on_hover_text("Viajar al Módulo de Control y Ascensor").clicked() {
-                            self.teleport_player(1232.0, 1200.0, 270.0, "Módulo de Control Primario");
+                        if ui.button("🎪 Circus Gallery").on_hover_text("Viajar a la Galería de Circus Baby").clicked() {
+                            self.teleport_player(1232.0, 320.0, 270.0, "Circus Gallery (Baby)");
                         }
-                        if ui.button("🥄 Scooping Room").on_hover_text("Viajar a la Sala de Desmantelamiento (Scooper)").clicked() {
-                            self.teleport_player(540.0, 640.0, 0.0, "Sala del Scooper");
+                        if ui.button("🩰 Ballora Gallery").on_hover_text("Viajar a la Galería de Ballora").clicked() {
+                            self.teleport_player(848.0, 720.0, 270.0, "Ballora Gallery");
                         }
-                        if ui.button("🎪 Circus Gallery").on_hover_text("Viajar a la Galería del Circo de Baby").clicked() {
-                            self.teleport_player(1650.0, 580.0, 180.0, "Galería del Circo");
+                        if ui.button("🤖 Funtime Auditorium").on_hover_text("Viajar al Auditorio Funtime (Funtime Foxy)").clicked() {
+                            self.teleport_player(1616.0, 720.0, 270.0, "Funtime Auditorium");
+                        }
+                        if ui.button("🥄 Scooping Room").on_hover_text("Viajar a la Sala de Desmantelamiento (Scooper & Ennard)").clicked() {
+                            self.teleport_player(1904.0, 180.0, 270.0, "Scooping Room");
+                        }
+                        if ui.button("🎛️ Control Module").on_hover_text("Viajar al Módulo de Control Primario").clicked() {
+                            self.teleport_player(1232.0, 1150.0, 90.0, "Módulo de Control Primario");
                         }
                     },
                 }
@@ -3158,6 +3172,28 @@ impl FrickEditorApp {
             }
             let mut props: Vec<PropBillboard> = Vec::new();
 
+            struct HorizontalCap {
+                p0: Pos2,
+                p1: Pos2,
+                p2: Pos2,
+                p3: Pos2,
+                avg_pz: f32,
+                tex_id: Option<egui::TextureId>,
+                col: Color32,
+                u_max: f32,
+                v_max: f32,
+            }
+            let mut horizontal_caps: Vec<HorizontalCap> = Vec::new();
+
+            struct AnimatronicProp {
+                anim_id: usize,
+                name: String,
+                x: f32,
+                y: f32,
+                base_z: f32,
+            }
+            let mut anim_list: Vec<AnimatronicProp> = Vec::new();
+
             if let Some(rd) = &active_room_data {
                 for inst in &rd.instances {
                     if inst.object.contains("Invisible") {
@@ -3165,16 +3201,90 @@ impl FrickEditorApp {
                     }
 
                     let obj = &inst.object;
-                    let is_wall = obj.contains("Wall");
+
+                    // 1. Animatrónicos auténticos del mapa
+                    if obj.contains("Animatronic") {
+                        let (anim_id, anim_name, base_z) = match self.selected_salvage_location {
+                            SalvageLocationIndex::Location1Fnaf1 => {
+                                if (inst.x - 608).abs() < 30 && (inst.y - 136).abs() < 30 {
+                                    (0, "Freddy Fazbear (Escenario)".to_string(), 32.0)
+                                } else if (inst.x - 72).abs() < 30 || (inst.x - 208).abs() < 30 && (inst.y - 560).abs() < 40 {
+                                    (3, "Foxy (Pirate Cove)".to_string(), 32.0)
+                                } else if (inst.x - 896).abs() < 30 && (inst.y - 208).abs() < 30 {
+                                    (4, "Golden Freddy".to_string(), 0.0)
+                                } else if (inst.x - 344).abs() < 30 {
+                                    (1, "Bonnie (Pasillo Oeste)".to_string(), 0.0)
+                                } else if (inst.x - 1128).abs() < 30 {
+                                    (2, "Chica (Cocina / Pasillo Este)".to_string(), 0.0)
+                                } else {
+                                    let aid = (inst.id as usize) % 5;
+                                    let aname = match aid {
+                                        0 => "Freddy Fazbear",
+                                        1 => "Bonnie",
+                                        2 => "Chica",
+                                        3 => "Foxy",
+                                        _ => "Golden Freddy",
+                                    };
+                                    (aid, aname.to_string(), 0.0)
+                                }
+                            },
+                            SalvageLocationIndex::Location2Fnaf2 => {
+                                if (inst.x - 1424).abs() < 40 {
+                                    (5, "Toy Freddy (Escenario)".to_string(), 32.0)
+                                } else if (inst.x - 760).abs() < 40 {
+                                    (8, "Mangle (Kids Cove)".to_string(), 0.0)
+                                } else if (inst.x - 296).abs() < 40 {
+                                    (9, "The Puppet (Prize Corner)".to_string(), 0.0)
+                                } else if (inst.x - 1792).abs() < 40 {
+                                    (10, "Balloon Boy (Game Area)".to_string(), 0.0)
+                                } else {
+                                    let aid = 5 + ((inst.id as usize) % 6);
+                                    (aid, "Animatrónico Toy / Withered".to_string(), 0.0)
+                                }
+                            },
+                            SalvageLocationIndex::Location3Fnaf3 => {
+                                if (inst.x - 1232).abs() < 40 {
+                                    (12, "Springtrap".to_string(), 0.0)
+                                } else {
+                                    let aid = 13 + ((inst.id as usize) % 6);
+                                    (aid, "Phantom Animatronic".to_string(), 0.0)
+                                }
+                            },
+                            SalvageLocationIndex::Location4WilliamWoods => {
+                                let aid = (inst.id as usize) % 5;
+                                (aid, "Animatrónico Afton".to_string(), 0.0)
+                            },
+                            SalvageLocationIndex::Location5SisterLocation => {
+                                if (inst.x - 1232).abs() < 40 && (inst.y - 192).abs() < 40 {
+                                    (19, "Circus Baby (Circus Gallery)".to_string(), 0.0)
+                                } else if (inst.x - 848).abs() < 40 {
+                                    (20, "Ballora (Ballora Gallery)".to_string(), 0.0)
+                                } else if (inst.x - 1616).abs() < 40 {
+                                    (22, "Funtime Foxy (Auditorium)".to_string(), 0.0)
+                                } else if (inst.x - 1904).abs() < 40 {
+                                    (23, "Ennard / Scooper".to_string(), 0.0)
+                                } else {
+                                    let aid = 19 + ((inst.id as usize) % 7);
+                                    (aid, "Funtime Animatronic".to_string(), 0.0)
+                                }
+                            },
+                        };
+                        anim_list.push(AnimatronicProp { anim_id, name: anim_name, x: inst.x as f32, y: inst.y as f32, base_z });
+                        continue;
+                    }
+
+                    // 2. Elementos arquitectónicos y sólidos 3D
+                    let is_stage = obj.contains("Stage");
+                    let is_wall = obj.contains("Wall") && !is_stage;
                     let is_arcade = obj.contains("Arcade");
                     let is_table = obj.contains("Table");
                     let is_door = obj.contains("Door");
                     let is_counter = obj.contains("Counter") || obj.contains("Cupboard") || obj.contains("Oven");
                     let is_bed = obj.contains("Bed") || obj.contains("Sofa");
                     let is_shelf = obj.contains("Shelf") || obj.contains("Dresser") || obj.contains("PartsBox");
+                    let is_chair = obj.contains("Chair");
 
-                    if is_wall || is_arcade || is_table || is_door || is_counter || is_bed || is_shelf {
-                        // En GameMaker: (x, y) es el CENTRO del bloque
+                    if is_wall || is_stage || is_arcade || is_table || is_door || is_counter || is_bed || is_shelf || is_chair {
                         let hw = inst.sx * 16.0;
                         let hh = inst.sy * 16.0;
                         let cx = inst.x as f32;
@@ -3184,14 +3294,16 @@ impl FrickEditorApp {
                         let y0 = cy - hh;
                         let y1 = cy + hh;
 
-                        let (h_top, h_bot) = if is_wall {
-                            (80.0_f32, 48.0_f32)
+                        let (h_top, h_bot) = if is_stage {
+                            (-16.0_f32, 48.0_f32) // Altura 32 sobre suelo
+                        } else if is_table {
+                            (-16.0_f32, 48.0_f32) // Altura 32 sobre suelo
+                        } else if is_chair {
+                            (-16.0_f32, 48.0_f32) // Altura 32 sobre suelo
                         } else if is_arcade {
                             (32.0_f32, 48.0_f32) // Altura total 80: top 32 sobre cámara, bot 48 en suelo
                         } else if is_door {
                             (48.0_f32, 48.0_f32)
-                        } else if is_table {
-                            (-16.0_f32, 48.0_f32)
                         } else if is_counter {
                             (-12.0_f32, 48.0_f32)
                         } else if is_bed {
@@ -3220,6 +3332,80 @@ impl FrickEditorApp {
                         wall_segments.push(WallSegment { x1: x0, y1: y1, x2: x1, y2: y1, len: w_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fsouth });
                         wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y1, len: h_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fwest });
                         wall_segments.push(WallSegment { x1: x1, y1: y0, x2: x1, y2: y1, len: h_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: feast });
+
+                        // Superficie horizontal superior (Tapa 3D de mesa o plataforma de escenario)
+                        if is_table || is_stage {
+                            let dz = -16.0_f32; // (32.0 - 48.0)
+                            let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                            let mut screen_corners = Vec::new();
+                            let mut pz_sum = 0.0_f32;
+                            let mut all_in_front = true;
+                            for (wx, wy) in corners {
+                                let cdx = wx - self.maze_player_x;
+                                let cdy = wy - self.maze_player_y;
+                                let cpz = cdx * cos_yaw + cdy * sin_yaw;
+                                let cpcx = -cdx * sin_yaw + cdy * cos_yaw;
+                                if cpz <= 4.0 { all_in_front = false; break; }
+                                pz_sum += cpz;
+                                let csx = rect.center().x + (cpcx / cpz) * focal;
+                                let csy = horizon_y - (dz / cpz) * focal;
+                                screen_corners.push(Pos2::new(csx, csy));
+                            }
+                            if all_in_front && screen_corners.len() == 4 {
+                                let avg_pz = pz_sum / 4.0;
+                                let cap_shade = ((1.0 - (avg_pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
+                                let cap_u8 = (255.0 * cap_shade) as u8;
+                                let cap_col = Color32::from_rgba_unmultiplied(cap_u8, cap_u8, cap_u8, 255);
+                                horizontal_caps.push(HorizontalCap {
+                                    p0: screen_corners[0],
+                                    p1: screen_corners[1],
+                                    p2: screen_corners[2],
+                                    p3: screen_corners[3],
+                                    avg_pz,
+                                    tex_id,
+                                    col: cap_col,
+                                    u_max: (w_len / 32.0).max(1.0),
+                                    v_max: (h_len / 32.0).max(1.0),
+                                });
+                            }
+                        }
+
+                        // Generar sillas alrededor de las mesas de comedor
+                        if obj == "oMazeWall_Table" {
+                            let chair_tex = self.get_maze_texture(ctx, "sMazeTex_Chair");
+                            let chair_tid = chair_tex.as_ref().map(|t| t.id());
+                            let chair_offsets = [
+                                (-36.0, -22.0), (-36.0, 0.0), (-36.0, 22.0),
+                                ( 36.0, -22.0), ( 36.0, 0.0), ( 36.0, 22.0),
+                            ];
+                            for (ox, oy) in chair_offsets {
+                                let px = cx + ox;
+                                let py = cy + oy;
+                                let cdx = px - self.maze_player_x;
+                                let cdy = py - self.maze_player_y;
+                                let cpz = cdx * cos_yaw + cdy * sin_yaw;
+                                let cpcx = -cdx * sin_yaw + cdy * cos_yaw;
+                                if cpz > 6.0 && cpz < 700.0 {
+                                    let csx = rect.center().x + (cpcx / cpz) * focal;
+                                    let cw = (22.0_f32 / cpz) * focal;
+                                    let ch = (32.0_f32 / cpz) * focal;
+                                    let c_ground = horizon_y + (48.0 / cpz) * focal;
+                                    let c_rect = Rect::from_min_max(Pos2::new(csx - cw * 0.5, c_ground - ch), Pos2::new(csx + cw * 0.5, c_ground));
+                                    let c_shade = ((1.0 - (cpz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
+                                    let c_col = Color32::from_rgba_unmultiplied((255.0 * c_shade) as u8, (255.0 * c_shade) as u8, (255.0 * c_shade) as u8, 255);
+                                    props.push(PropBillboard {
+                                        pz: cpz,
+                                        pcx: cpcx,
+                                        screen_x: csx,
+                                        rect: c_rect,
+                                        col: c_col,
+                                        tex_id: chair_tid,
+                                        obj_name: "oMazeProp_Chair".to_string(),
+                                        coords: (px as i32, py as i32),
+                                    });
+                                }
+                            }
+                        }
                     } else {
                         // Billboards 2D planos reales (Cajas de regalo, marioneta, globos)
                         let px = inst.x as f32;
@@ -3266,6 +3452,23 @@ impl FrickEditorApp {
                             });
                         }
                     }
+                }
+            }
+
+            // Animatrónicos acompañantes en el escenario principal
+            if self.selected_salvage_location == SalvageLocationIndex::Location1Fnaf1 {
+                if !anim_list.iter().any(|a| a.anim_id == 1 && a.base_z == 32.0) {
+                    anim_list.push(AnimatronicProp { anim_id: 1, name: "Bonnie (Escenario)".to_string(), x: 552.0, y: 136.0, base_z: 32.0 });
+                }
+                if !anim_list.iter().any(|a| a.anim_id == 2 && a.base_z == 32.0) {
+                    anim_list.push(AnimatronicProp { anim_id: 2, name: "Chica (Escenario)".to_string(), x: 664.0, y: 136.0, base_z: 32.0 });
+                }
+            } else if self.selected_salvage_location == SalvageLocationIndex::Location2Fnaf2 {
+                if !anim_list.iter().any(|a| a.anim_id == 6 && a.base_z == 32.0) {
+                    anim_list.push(AnimatronicProp { anim_id: 6, name: "Toy Bonnie (Escenario)".to_string(), x: 1368.0, y: 56.0, base_z: 32.0 });
+                }
+                if !anim_list.iter().any(|a| a.anim_id == 7 && a.base_z == 32.0) {
+                    anim_list.push(AnimatronicProp { anim_id: 7, name: "Toy Chica (Escenario)".to_string(), x: 1480.0, y: 56.0, base_z: 32.0 });
                 }
             }
 
@@ -3354,23 +3557,23 @@ impl FrickEditorApp {
                     let col = Color32::from_rgba_unmultiplied(shade_u8, shade_u8, shade_u8, 255);
 
                     let wall_pos = hit.u * hit.len;
+                    let u_cont = (wall_pos / 32.0).rem_euclid(1.0);
+                    let du = (hit.len / (32.0 * num_rays as f32)).clamp(0.001, 0.05);
+
                     let (u0, u1) = match hit.face_type {
                         1 => {
                             // Frontal recreativa: pantalla y marquesina en [0.5, 1.0]
-                            let sub = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
-                            let base = 0.5 + (sub / 32.0) * 0.5;
-                            (base, base + (0.5 / 32.0))
+                            let base = 0.5 + u_cont * 0.5;
+                            (base, (base + du * 0.5).min(1.0))
                         },
                         2 => {
                             // Lateral recreativa: ilustración del personaje en [0.0, 0.5]
-                            let sub = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
-                            let base = (sub / 32.0) * 0.5;
-                            (base, base + (0.5 / 32.0))
+                            let base = u_cont * 0.5;
+                            (base, (base + du * 0.5).min(0.5))
                         },
                         _ => {
-                            // Textura repetida cada 32 píxeles
-                            let tex_col = (wall_pos.floor() as i32 % 32).rem_euclid(32) as f32;
-                            (tex_col / 32.0, (tex_col + 1.0) / 32.0)
+                            // Textura repetida continua sin escalonado discreto
+                            (u_cont, (u_cont + du).min(1.0))
                         }
                     };
 
@@ -3390,7 +3593,22 @@ impl FrickEditorApp {
                 }
             }
 
-            // Dibujar Props respetando z_buffer
+            // Dibujar Tapas Horizontales 3D (Tapas de mesas y plataforma de escenario)
+            horizontal_caps.sort_by(|a, b| b.avg_pz.partial_cmp(&a.avg_pz).unwrap_or(std::cmp::Ordering::Equal));
+            for cap in horizontal_caps {
+                if let Some(tid) = cap.tex_id {
+                    let mut mesh = egui::Mesh::with_texture(tid);
+                    mesh.vertices.push(egui::epaint::Vertex { pos: cap.p0, uv: Pos2::new(0.0, 0.0), color: cap.col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: cap.p1, uv: Pos2::new(cap.u_max, 0.0), color: cap.col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: cap.p2, uv: Pos2::new(cap.u_max, cap.v_max), color: cap.col });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: cap.p3, uv: Pos2::new(0.0, cap.v_max), color: cap.col });
+                    mesh.add_triangle(0, 1, 2);
+                    mesh.add_triangle(0, 2, 3);
+                    painter.add(egui::Shape::mesh(mesh));
+                }
+            }
+
+            // Dibujar Props (sillas, decoraciones) respetando z_buffer
             props.sort_by(|a, b| b.pz.partial_cmp(&a.pz).unwrap_or(std::cmp::Ordering::Equal));
             for prop in props {
                 let ray_idx = ((prop.screen_x - rect.min.x) / col_w).round() as i32;
@@ -3410,6 +3628,64 @@ impl FrickEditorApp {
                     if prop.pcx.abs() < (prop.pz * 0.12) && prop.pz < 280.0 {
                         if targeted_object.as_ref().map(|(_, d, _)| prop.pz < *d).unwrap_or(true) {
                             targeted_object = Some((prop.obj_name.clone(), prop.pz, prop.coords));
+                        }
+                    }
+                }
+            }
+
+            // Dibujar Animatrónicos Auténticos 1:1 desde sMaze_Animatronics
+            let tex_anim = self.get_maze_texture(ctx, "sMaze_Animatronics");
+            if let Some(anim_tex) = tex_anim {
+                anim_list.sort_by(|a, b| {
+                    let da = (a.x - self.maze_player_x).powi(2) + (a.y - self.maze_player_y).powi(2);
+                    let db = (b.x - self.maze_player_x).powi(2) + (b.y - self.maze_player_y).powi(2);
+                    db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                for anim in &anim_list {
+                    let dx = anim.x - self.maze_player_x;
+                    let dy = anim.y - self.maze_player_y;
+                    let pz = dx * cos_yaw + dy * sin_yaw;
+                    let pcx = -dx * sin_yaw + dy * cos_yaw;
+
+                    if pz > 6.0 && pz < 750.0 {
+                        let screen_x = rect.center().x + (pcx / pz) * focal;
+                        let anim_w = (64.0_f32 / pz) * focal;
+                        let top_dz = (anim.base_z + 96.0) - 48.0;
+                        let bot_dz = anim.base_z - 48.0;
+                        let top_y = horizon_y - (top_dz / pz) * focal;
+                        let ground_y = horizon_y - (bot_dz / pz) * focal;
+
+                        let a_rect = Rect::from_min_max(
+                            Pos2::new(screen_x - (anim_w * 0.5), top_y),
+                            Pos2::new(screen_x + (anim_w * 0.5), ground_y)
+                        );
+
+                        let ray_idx = ((screen_x - rect.min.x) / col_w).round() as i32;
+                        let occluded = if ray_idx >= 0 && (ray_idx as usize) < num_rays {
+                            pz > (z_buffer[ray_idx as usize] + 16.0)
+                        } else {
+                            false
+                        };
+
+                        if !occluded {
+                            let dist_shade = ((1.0 - (pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.15, 1.0);
+                            let col = Color32::from_rgba_unmultiplied((255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, 255);
+
+                            let col_idx = (anim.anim_id % 10) as f32;
+                            let row_idx = (anim.anim_id / 10) as f32;
+                            let u0 = col_idx / 10.0;
+                            let v0 = row_idx / 10.0;
+                            let u1 = (col_idx + 1.0) / 10.0;
+                            let v1 = (row_idx + 1.0) / 10.0;
+
+                            painter.image(anim_tex.id(), a_rect, Rect::from_min_max(Pos2::new(u0, v0), Pos2::new(u1, v1)), col);
+
+                            if pcx.abs() < (pz * 0.15) && pz < 280.0 {
+                                if targeted_object.as_ref().map(|(_, d, _)| pz < *d).unwrap_or(true) {
+                                    targeted_object = Some((anim.name.clone(), pz, (anim.x as i32, anim.y as i32)));
+                                }
+                            }
                         }
                     }
                 }
