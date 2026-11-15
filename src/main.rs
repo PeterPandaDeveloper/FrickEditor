@@ -97,6 +97,9 @@ struct FrickEditorApp {
     noclip_mode: bool,
     move_speed_multiplier: f32,
     radar_display_mode: usize,
+    radar_zoom: f32,
+    radar_follow_player: bool,
+    radar_pan_offset: egui::Vec2,
     show_crosshair: bool,
     show_audit_window: bool,
     // Debugger y Filtros de Entidades en Plano 2D
@@ -193,6 +196,9 @@ impl FrickEditorApp {
             noclip_mode: false,
             move_speed_multiplier: 1.0,
             radar_display_mode: 0,
+            radar_zoom: 1.0,
+            radar_follow_player: true,
+            radar_pan_offset: egui::Vec2::ZERO,
             show_crosshair: true,
             show_audit_window: false,
             dbg_filter_walls: true,
@@ -412,52 +418,52 @@ impl eframe::App for FrickEditorApp {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{}  FRICKEDITOR STUDIO", ic::CUBE))
-                        .size(19.0)
+                    RichText::new(format!("{}  FRICKEDITOR", ic::CUBE))
+                        .size(17.0)
                         .strong()
                         .color(Color32::from_rgb(245, 165, 60)),
                 );
 
-                ui.add_space(10.0);
-                // Conmutador de Perfiles en Barra Superior:
-                // 1. [🎮 Jugar Vanilla (Juego Limpio)]
+                ui.add_space(8.0);
+                // Conmutador de Perfiles en Barra Superior (Compacto y responsivo):
+                // 1. [🎮 Vanilla]
                 let play_vanilla_btn = egui::Button::new(
-                    RichText::new(format!("{}  Jugar Vanilla", ic::GAME_CONTROLLER))
-                        .size(12.5)
+                    RichText::new(format!("{} Vanilla", ic::GAME_CONTROLLER))
+                        .size(11.5)
                         .strong()
                         .color(Color32::from_rgb(220, 255, 230)),
                 )
                 .fill(Color32::from_rgb(25, 105, 60))
-                .min_size(Vec2::new(135.0, 28.0));
+                .min_size(Vec2::new(96.0, 25.0));
 
-                if ui.add(play_vanilla_btn).on_hover_text("Restaura data.win original limpio desde el respaldo intacto y abre el juego oficial sin mods").clicked() {
+                if ui.add(play_vanilla_btn).on_hover_text("Restaura data.win original limpio desde el respaldo intacto y abre el juego sin mods").clicked() {
                     self.handle_play_vanilla();
                 }
 
-                ui.add_space(4.0);
-                // 2. [🚀 Jugar Modded (Murray & Amigos)]
+                ui.add_space(3.0);
+                // 2. [🚀 Modded]
                 let play_modded_btn = egui::Button::new(
-                    RichText::new(format!("{}  Jugar Modded", ic::ROCKET_LAUNCH))
-                        .size(12.5)
+                    RichText::new(format!("{} Modded", ic::ROCKET_LAUNCH))
+                        .size(11.5)
                         .strong()
                         .color(Color32::WHITE),
                 )
                 .fill(Color32::from_rgb(220, 95, 20))
-                .min_size(Vec2::new(135.0, 28.0));
+                .min_size(Vec2::new(100.0, 25.0));
 
                 if ui.add(play_modded_btn).on_hover_text("Inyecta los animatrónicos activos (Murray y amigos) sobre la base limpia y arranca el juego").clicked() {
                     self.handle_play_modded();
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(3.0);
                 let utmt_header_btn = egui::Button::new(
                     RichText::new(format!("{} UTMT", ic::CODE))
-                        .size(12.0)
+                        .size(11.0)
                         .strong()
                         .color(Color32::from_rgb(220, 235, 255)),
                 )
                 .fill(Color32::from_rgb(45, 65, 95))
-                .min_size(Vec2::new(72.0, 26.0));
+                .min_size(Vec2::new(64.0, 25.0));
 
                 if ui.add(utmt_header_btn).on_hover_text("Abrir UndertaleModTool directamente cargando data.win").clicked() {
                     match GameLauncher::open_undertale_mod_tool(&self.project.utmt_scripts_dir, &self.project.game_dir) {
@@ -474,36 +480,36 @@ impl eframe::App for FrickEditorApp {
                     }
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(3.0);
                 let audit_header_btn = egui::Button::new(
                     RichText::new(format!("{} Auditoría", ic::FILE_TEXT))
-                        .size(12.0)
+                        .size(11.0)
                         .strong()
                         .color(Color32::from_rgb(220, 245, 230)),
                 )
                 .fill(Color32::from_rgb(35, 75, 55))
-                .min_size(Vec2::new(88.0, 26.0));
+                .min_size(Vec2::new(82.0, 25.0));
 
                 if ui.add(audit_header_btn).on_hover_text("Ver qué se modificó en el juego, explicación técnica y auditoría de inyecciones").clicked() {
                     self.show_audit_window = true;
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(3.0);
                 let integ_header_btn = egui::Button::new(
                     RichText::new(format!("{} Integridad", ic::MAGNIFYING_GLASS))
-                        .size(12.0)
+                        .size(11.0)
                         .strong()
                         .color(Color32::from_rgb(220, 240, 255)),
                 )
                 .fill(Color32::from_rgb(35, 55, 85))
-                .min_size(Vec2::new(92.0, 26.0));
+                .min_size(Vec2::new(86.0, 25.0));
 
                 if ui.add(integ_header_btn).on_hover_text("Revisar integridad de archivos, respaldos y estado de data.win").clicked() {
                     self.handle_check_integrity();
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(format!("{}  Guardar JSON", ic::FLOPPY_DISK)).clicked() {
+                    if ui.button(format!("{} Guardar", ic::FLOPPY_DISK)).on_hover_text("Guardar configuración del proyecto a archivo JSON").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Proyecto FrickEditor", &["json"])
                             .set_file_name("murray_project.json")
@@ -517,7 +523,7 @@ impl eframe::App for FrickEditorApp {
                         }
                     }
 
-                    if ui.button(format!("{}  Cargar JSON", ic::FOLDER_OPEN)).clicked() {
+                    if ui.button(format!("{} Cargar", ic::FOLDER_OPEN)).on_hover_text("Cargar proyecto desde archivo JSON").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Proyecto FrickEditor", &["json"])
                             .pick_file()
@@ -533,7 +539,7 @@ impl eframe::App for FrickEditorApp {
                         }
                     }
 
-                    if ui.button(format!("{}  Exportar .fbmod", ic::UPLOAD_SIMPLE)).clicked() {
+                    if ui.button(format!("{} Exportar", ic::UPLOAD_SIMPLE)).on_hover_text("Exportar paquete .fbmod distribuible").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Frickbear Mod Package", &["fbmod"])
                             .set_file_name(format!("{}.fbmod", self.project.internal_id))
@@ -552,7 +558,7 @@ impl eframe::App for FrickEditorApp {
                         }
                     }
 
-                    if ui.button(format!("{}  Importar .fbmod", ic::DOWNLOAD_SIMPLE)).clicked() {
+                    if ui.button(format!("{} Importar", ic::DOWNLOAD_SIMPLE)).on_hover_text("Importar paquete .fbmod existente").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("Frickbear Mod Package", &["fbmod", "zip"])
                             .pick_file()
@@ -581,7 +587,8 @@ impl eframe::App for FrickEditorApp {
                         Color32::from_rgb(235, 175, 55)
                     };
                     ui.label(
-                        RichText::new(format!("{}  Assets verificados: {}/{}", ic::CHECK_CIRCLE, ready, total))
+                        RichText::new(format!("{} Assets: {}/{}", ic::CHECK_CIRCLE, ready, total))
+                            .size(11.5)
                             .color(badge_col)
                             .strong(),
                     );
@@ -3216,11 +3223,12 @@ impl FrickEditorApp {
                 ui.add_space(6.0);
                 let radar_btn_txt = match self.radar_display_mode {
                     0 => "🗺️ Radar: Normal",
-                    1 => "🗺️ Radar: Zoom (Grande)",
+                    1 => "🗺️ Radar: Grande",
+                    2 => "🗺️ Radar: Extra Grande",
                     _ => "🗺️ Radar: Oculto",
                 };
                 if ui.button(radar_btn_txt).on_hover_text("Alternar tamaño del mini-mapa o esconderlo").clicked() {
-                    self.radar_display_mode = (self.radar_display_mode + 1) % 3;
+                    self.radar_display_mode = (self.radar_display_mode + 1) % 4;
                 }
 
                 let cross_col = if self.show_crosshair { Color32::from_rgb(110, 220, 255) } else { Color32::GRAY };
@@ -3596,6 +3604,7 @@ impl FrickEditorApp {
                 x: f32,
                 y: f32,
                 base_z: f32,
+                is_special: bool,
             }
             let mut anim_list: Vec<AnimatronicProp> = Vec::new();
 
@@ -3625,49 +3634,81 @@ impl FrickEditorApp {
 
                     // 1. Animatrónicos auténticos del mapa
                     if obj.contains("Animatronic") {
+                        // Detectar apariciones especiales (oInteraction_AnimatronicRandom, Golden Freddy, etc.)
+                        let is_special_appearance = obj.contains("Random")
+                            || obj.contains("Special")
+                            || (self.selected_salvage_location == SalvageLocationIndex::Location1Fnaf1 && (inst.x - 896).abs() < 30 && (inst.y - 208).abs() < 30);
+
+                        if is_special_appearance {
+                            anim_list.push(AnimatronicProp {
+                                anim_id: 51,
+                                name: "Popgoes the Weasel (Aparición Especial)".to_string(),
+                                x: inst.x as f32,
+                                y: inst.y as f32,
+                                base_z: 0.0,
+                                is_special: true,
+                            });
+                            continue;
+                        }
+
                         let (anim_id, anim_name, base_z) = match self.selected_salvage_location {
                             SalvageLocationIndex::Location1Fnaf1 => {
                                 if (inst.x - 608).abs() < 30 && (inst.y - 136).abs() < 30 {
                                     (0, "Freddy Fazbear (Escenario)".to_string(), 32.0)
-                                } else if (inst.x - 72).abs() < 30 || (inst.x - 208).abs() < 30 && (inst.y - 560).abs() < 40 {
+                                } else if (inst.x - 72).abs() < 30 || ((inst.x - 208).abs() < 30 && (inst.y - 560).abs() < 40) {
                                     (3, "Foxy (Pirate Cove)".to_string(), 32.0)
-                                } else if (inst.x - 896).abs() < 30 && (inst.y - 208).abs() < 30 {
-                                    (4, "Golden Freddy".to_string(), 0.0)
                                 } else if (inst.x - 344).abs() < 30 {
                                     (1, "Bonnie (Pasillo Oeste)".to_string(), 0.0)
                                 } else if (inst.x - 1128).abs() < 30 {
                                     (2, "Chica (Cocina / Pasillo Este)".to_string(), 0.0)
+                                } else if (inst.x - 880).abs() < 30 {
+                                    (6, "Endoskeleton Endo-01".to_string(), 0.0)
+                                } else if (inst.x - 72).abs() < 30 {
+                                    (1, "Bonnie (Backstage)".to_string(), 0.0)
+                                } else if (inst.x - 1360).abs() < 30 {
+                                    (2, "Chica (Aseos)".to_string(), 0.0)
+                                } else if (inst.x - 1184).abs() < 30 {
+                                    (0, "Freddy Fazbear (Esquina Este)".to_string(), 0.0)
                                 } else {
-                                    let aid = (inst.id as usize) % 5;
+                                    let aid = (inst.id as usize) % 4;
                                     let aname = match aid {
                                         0 => "Freddy Fazbear",
                                         1 => "Bonnie",
                                         2 => "Chica",
-                                        3 => "Foxy",
-                                        _ => "Golden Freddy",
+                                        _ => "Foxy",
                                     };
                                     (aid, aname.to_string(), 0.0)
                                 }
                             },
                             SalvageLocationIndex::Location2Fnaf2 => {
                                 if (inst.x - 1424).abs() < 40 {
-                                    (5, "Toy Freddy (Escenario)".to_string(), 32.0)
+                                    (7, "Toy Freddy (Escenario)".to_string(), 32.0)
                                 } else if (inst.x - 760).abs() < 40 {
-                                    (8, "Mangle (Kids Cove)".to_string(), 0.0)
+                                    (10, "Mangle (Kids Cove)".to_string(), 0.0)
                                 } else if (inst.x - 296).abs() < 40 {
-                                    (9, "The Puppet (Prize Corner)".to_string(), 0.0)
+                                    (17, "The Puppet (Prize Corner)".to_string(), 0.0)
                                 } else if (inst.x - 1792).abs() < 40 {
-                                    (10, "Balloon Boy (Game Area)".to_string(), 0.0)
+                                    (11, "Balloon Boy (Game Area)".to_string(), 0.0)
+                                } else if (inst.x - 448).abs() < 40 {
+                                    (14, "Withered Bonnie (Parts & Service)".to_string(), 0.0)
+                                } else if (inst.x - 976).abs() < 40 {
+                                    (15, "Withered Chica".to_string(), 0.0)
+                                } else if (inst.x - 1080).abs() < 40 {
+                                    (13, "Withered Freddy".to_string(), 0.0)
+                                } else if (inst.x - 456).abs() < 40 {
+                                    (16, "Withered Foxy".to_string(), 0.0)
+                                } else if (inst.x - 1392).abs() < 40 {
+                                    (12, "JJ".to_string(), 0.0)
                                 } else {
-                                    let aid = 5 + ((inst.id as usize) % 6);
+                                    let aid = 7 + ((inst.id as usize) % 7);
                                     (aid, "Animatrónico Toy / Withered".to_string(), 0.0)
                                 }
                             },
                             SalvageLocationIndex::Location3Fnaf3 => {
                                 if (inst.x - 1232).abs() < 40 {
-                                    (12, "Springtrap".to_string(), 0.0)
+                                    (20, "Springtrap".to_string(), 0.0)
                                 } else {
-                                    let aid = 13 + ((inst.id as usize) % 6);
+                                    let aid = 19 + ((inst.id as usize) % 6);
                                     (aid, "Phantom Animatronic".to_string(), 0.0)
                                 }
                             },
@@ -3677,24 +3718,25 @@ impl FrickEditorApp {
                             },
                             SalvageLocationIndex::Location5SisterLocation => {
                                 if (inst.x - 1232).abs() < 40 && (inst.y - 192).abs() < 40 {
-                                    (19, "Circus Baby (Circus Gallery)".to_string(), 0.0)
+                                    (24, "Circus Baby (Circus Gallery)".to_string(), 0.0)
                                 } else if (inst.x - 848).abs() < 40 {
-                                    (20, "Ballora (Ballora Gallery)".to_string(), 0.0)
+                                    (25, "Ballora (Ballora Gallery)".to_string(), 0.0)
                                 } else if (inst.x - 1616).abs() < 40 {
-                                    (22, "Funtime Foxy (Auditorium)".to_string(), 0.0)
+                                    (27, "Funtime Foxy (Auditorium)".to_string(), 0.0)
                                 } else if (inst.x - 1904).abs() < 40 {
-                                    (23, "Ennard / Scooper".to_string(), 0.0)
+                                    (28, "Ennard / Scooper".to_string(), 0.0)
                                 } else {
-                                    let aid = 19 + ((inst.id as usize) % 7);
+                                    let aid = 24 + ((inst.id as usize) % 7);
                                     (aid, "Funtime Animatronic".to_string(), 0.0)
                                 }
                             },
                         };
-                        anim_list.push(AnimatronicProp { anim_id, name: anim_name, x: inst.x as f32, y: inst.y as f32, base_z });
+                        anim_list.push(AnimatronicProp { anim_id, name: anim_name, x: inst.x as f32, y: inst.y as f32, base_z, is_special: false });
                         continue;
                     }
 
                     // 2. Elementos arquitectónicos y sólidos 3D
+                    let is_cove = obj.contains("PiratesCove");
                     let is_stage = obj.contains("Stage");
                     let is_wall = obj.contains("Wall") && !is_stage;
                     let is_arcade = obj.contains("Arcade");
@@ -3704,6 +3746,79 @@ impl FrickEditorApp {
                     let is_bed = obj.contains("Bed") || obj.contains("Sofa");
                     let is_shelf = obj.contains("Shelf") || obj.contains("Dresser") || obj.contains("PartsBox");
                     let is_chair = obj.contains("Chair");
+
+                    if is_cove {
+                        let cx = inst.x as f32;
+                        let cy = inst.y as f32;
+                        let radius = 80.0_f32;
+                        let sides = 16;
+                        let tex_curtain = self.get_maze_texture(ctx, "sMazeWall_Curtain");
+                        let curtain_tid = tex_curtain.as_ref().map(|t| t.id());
+                        let tex_wood = self.get_maze_texture(ctx, "sMazeTex_Wood");
+                        let wood_tid = tex_wood.as_ref().map(|t| t.id());
+
+                        for k in 0..sides {
+                            let a1 = (k as f32) * std::f32::consts::TAU / (sides as f32);
+                            let a2 = ((k + 1) as f32) * std::f32::consts::TAU / (sides as f32);
+                            let p1x = cx + a1.cos() * radius;
+                            let p1y = cy + a1.sin() * radius;
+                            let p2x = cx + a2.cos() * radius;
+                            let p2y = cy + a2.sin() * radius;
+                            let seg_len = ((p2x - p1x).powi(2) + (p2y - p1y).powi(2)).sqrt();
+
+                            // Apertura frontal hacia el Este (ángulo 0): altura reducida para permitir ver a Foxy dentro
+                            let is_front_opening = k == 0 || k == 15;
+                            let (h_top, h_bot) = if is_front_opening {
+                                (-16.0_f32, 48.0_f32)
+                            } else {
+                                (80.0_f32, 48.0_f32)
+                            };
+
+                            wall_segments.push(WallSegment {
+                                x1: p1x, y1: p1y, x2: p2x, y2: p2y,
+                                len: seg_len, h_top, h_bot,
+                                tex_id: curtain_tid,
+                                obj_name: "oMazeProp_PiratesCove".to_string(),
+                                coords: (inst.x, inst.y),
+                                face_type: 0,
+                            });
+                        }
+
+                        // Tarima de madera interior de Pirate Cove a altura 32
+                        let dz = -16.0_f32;
+                        let p_cove_corners = [
+                            (cx - 56.0, cy - 56.0),
+                            (cx + 56.0, cy - 56.0),
+                            (cx + 56.0, cy + 56.0),
+                            (cx - 56.0, cy + 56.0),
+                        ];
+                        let mut scr_cove = Vec::new();
+                        let mut pz_sum = 0.0_f32;
+                        let mut all_in = true;
+                        for (wx, wy) in p_cove_corners {
+                            let cdx = wx - self.maze_player_x;
+                            let cdy = wy - self.maze_player_y;
+                            let cpz = cdx * cos_yaw + cdy * sin_yaw;
+                            let cpcx = -cdx * sin_yaw + cdy * cos_yaw;
+                            if cpz <= 4.0 { all_in = false; break; }
+                            pz_sum += cpz;
+                            let csx = rect.center().x + (cpcx / cpz) * focal;
+                            let csy = horizon_y - (dz / cpz) * focal;
+                            scr_cove.push(Pos2::new(csx, csy));
+                        }
+                        if all_in && scr_cove.len() == 4 {
+                            let avg_pz = pz_sum / 4.0;
+                            let cap_shade = ((1.0 - (avg_pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
+                            let cap_u8 = (255.0 * cap_shade) as u8;
+                            let cap_col = Color32::from_rgba_unmultiplied(cap_u8, cap_u8, cap_u8, 255);
+                            horizontal_caps.push(HorizontalCap {
+                                p0: scr_cove[0], p1: scr_cove[1], p2: scr_cove[2], p3: scr_cove[3],
+                                avg_pz, tex_id: wood_tid, col: cap_col,
+                                u_max: 3.5, v_max: 3.5,
+                            });
+                        }
+                        continue;
+                    }
 
                     if is_wall || is_stage || is_arcade || is_table || is_door || is_counter || is_bed || is_shelf || is_chair {
                         let hw = inst.sx * 16.0;
@@ -3742,17 +3857,25 @@ impl FrickEditorApp {
                         let w_len = x1 - x0;
                         let h_len = y1 - y0;
 
-                        // Para máquinas recreativas: Norte y Sur son laterales (face_type 2), Oeste es frontal (face_type 1)
+                        // Para máquinas recreativas: Norte y Sur son laterales con arte (face_type 2), Oeste es frontal con pantalla CRT (face_type 1)
+                        let tex_arcade_screen = if is_arcade { self.get_maze_texture(ctx, "sMazeTex_ArcadeScreen_1") } else { None };
+                        let scr_tid = tex_arcade_screen.as_ref().map(|t| t.id());
+
                         let (fnorth, fsouth, fwest, feast) = if is_arcade {
                             (2, 2, 1, 0)
                         } else {
                             (0, 0, 0, 0)
                         };
 
-                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x1, y2: y0, len: w_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fnorth });
-                        wall_segments.push(WallSegment { x1: x0, y1: y1, x2: x1, y2: y1, len: w_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fsouth });
-                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y1, len: h_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: fwest });
-                        wall_segments.push(WallSegment { x1: x1, y1: y0, x2: x1, y2: y1, len: h_len, h_top, h_bot, tex_id, obj_name: obj.clone(), coords, face_type: feast });
+                        let tex_north = tex_id;
+                        let tex_south = tex_id;
+                        let tex_west = if is_arcade { scr_tid } else { tex_id };
+                        let tex_east = if is_arcade { tex_default_wall.as_ref().map(|t| t.id()) } else { tex_id };
+
+                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x1, y2: y0, len: w_len, h_top, h_bot, tex_id: tex_north, obj_name: obj.clone(), coords, face_type: fnorth });
+                        wall_segments.push(WallSegment { x1: x0, y1: y1, x2: x1, y2: y1, len: w_len, h_top, h_bot, tex_id: tex_south, obj_name: obj.clone(), coords, face_type: fsouth });
+                        wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y1, len: h_len, h_top, h_bot, tex_id: tex_west, obj_name: obj.clone(), coords, face_type: fwest });
+                        wall_segments.push(WallSegment { x1: x1, y1: y0, x2: x1, y2: y1, len: h_len, h_top, h_bot, tex_id: tex_east, obj_name: obj.clone(), coords, face_type: feast });
 
                         // Superficie horizontal superior (Tapa 3D de mesa o plataforma de escenario)
                         if is_table || is_stage {
@@ -3791,13 +3914,13 @@ impl FrickEditorApp {
                             }
                         }
 
-                        // Generar sillas alrededor de las mesas de comedor
+                        // Generar sillas alrededor de las mesas de comedor (correctamente alineadas fuera del mantel)
                         if obj == "oMazeWall_Table" {
                             let chair_tex = self.get_maze_texture(ctx, "sMazeTex_Chair");
                             let chair_tid = chair_tex.as_ref().map(|t| t.id());
                             let chair_offsets = [
-                                (-36.0, -22.0), (-36.0, 0.0), (-36.0, 22.0),
-                                ( 36.0, -22.0), ( 36.0, 0.0), ( 36.0, 22.0),
+                                (-60.0, -54.0), (-60.0, -18.0), (-60.0, 18.0), (-60.0, 54.0),
+                                ( 60.0, -54.0), ( 60.0, -18.0), ( 60.0, 18.0), ( 60.0, 54.0),
                             ];
                             for (ox, oy) in chair_offsets {
                                 let px = cx + ox;
@@ -3883,17 +4006,17 @@ impl FrickEditorApp {
             // Animatrónicos acompañantes en el escenario principal
             if self.selected_salvage_location == SalvageLocationIndex::Location1Fnaf1 {
                 if !anim_list.iter().any(|a| a.anim_id == 1 && a.base_z == 32.0) {
-                    anim_list.push(AnimatronicProp { anim_id: 1, name: "Bonnie (Escenario)".to_string(), x: 552.0, y: 136.0, base_z: 32.0 });
+                    anim_list.push(AnimatronicProp { anim_id: 1, name: "Bonnie (Escenario)".to_string(), x: 552.0, y: 136.0, base_z: 32.0, is_special: false });
                 }
                 if !anim_list.iter().any(|a| a.anim_id == 2 && a.base_z == 32.0) {
-                    anim_list.push(AnimatronicProp { anim_id: 2, name: "Chica (Escenario)".to_string(), x: 664.0, y: 136.0, base_z: 32.0 });
+                    anim_list.push(AnimatronicProp { anim_id: 2, name: "Chica (Escenario)".to_string(), x: 664.0, y: 136.0, base_z: 32.0, is_special: false });
                 }
             } else if self.selected_salvage_location == SalvageLocationIndex::Location2Fnaf2 {
-                if !anim_list.iter().any(|a| a.anim_id == 6 && a.base_z == 32.0) {
-                    anim_list.push(AnimatronicProp { anim_id: 6, name: "Toy Bonnie (Escenario)".to_string(), x: 1368.0, y: 56.0, base_z: 32.0 });
+                if !anim_list.iter().any(|a| a.anim_id == 8 && a.base_z == 32.0) {
+                    anim_list.push(AnimatronicProp { anim_id: 8, name: "Toy Bonnie (Escenario)".to_string(), x: 1368.0, y: 56.0, base_z: 32.0, is_special: false });
                 }
-                if !anim_list.iter().any(|a| a.anim_id == 7 && a.base_z == 32.0) {
-                    anim_list.push(AnimatronicProp { anim_id: 7, name: "Toy Chica (Escenario)".to_string(), x: 1480.0, y: 56.0, base_z: 32.0 });
+                if !anim_list.iter().any(|a| a.anim_id == 9 && a.base_z == 32.0) {
+                    anim_list.push(AnimatronicProp { anim_id: 9, name: "Toy Chica (Escenario)".to_string(), x: 1480.0, y: 56.0, base_z: 32.0, is_special: false });
                 }
             }
 
@@ -3987,14 +4110,12 @@ impl FrickEditorApp {
 
                     let (u0, u1) = match hit.face_type {
                         1 => {
-                            // Frontal recreativa: pantalla y marquesina en [0.5, 1.0]
-                            let base = 0.5 + u_cont * 0.5;
-                            (base, (base + du * 0.5).min(1.0))
+                            // Frontal recreativa: pantalla CRT completa en [0.0, 1.0]
+                            (u_cont, (u_cont + du).min(1.0))
                         },
                         2 => {
-                            // Lateral recreativa: ilustración del personaje en [0.0, 0.5]
-                            let base = u_cont * 0.5;
-                            (base, (base + du * 0.5).min(0.5))
+                            // Lateral recreativa: arte del mueble en [0.0, 1.0]
+                            (u_cont, (u_cont + du).min(1.0))
                         },
                         _ => {
                             // Textura repetida continua sin escalonado discreto
@@ -4124,8 +4245,9 @@ impl FrickEditorApp {
                 }
             }
 
-            // Dibujar Animatrónicos Auténticos 1:1 desde sMaze_Animatronics
+            // Dibujar Animatrónicos Auténticos 1:1 desde sMaze_Animatronics & Skin de Popgoes
             let tex_anim = self.get_maze_texture(ctx, "sMaze_Animatronics");
+            let tex_popgoes = self.get_maze_texture(ctx, "sPopgoes_Salvage");
             if let Some(anim_tex) = tex_anim {
                 anim_list.sort_by(|a, b| {
                     let da = (a.x - self.maze_player_x).powi(2) + (a.y - self.maze_player_y).powi(2);
@@ -4163,14 +4285,20 @@ impl FrickEditorApp {
                             let dist_shade = ((1.0 - (pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.15, 1.0);
                             let col = Color32::from_rgba_unmultiplied((255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, 255);
 
-                            let col_idx = (anim.anim_id % 10) as f32;
-                            let row_idx = (anim.anim_id / 10) as f32;
-                            let u0 = col_idx / 10.0;
-                            let v0 = row_idx / 10.0;
-                            let u1 = (col_idx + 1.0) / 10.0;
-                            let v1 = (row_idx + 1.0) / 10.0;
+                            let (u0, v0, u1, v1, tex_to_render) = if anim.is_special || anim.anim_id == 51 {
+                                if let Some(ptex) = &tex_popgoes {
+                                    (0.0, 0.0, 1.0, 1.0, ptex.id())
+                                } else {
+                                    // Índice 51 en sMaze_Animatronics (col 1, row 5)
+                                    (0.1, 0.5, 0.2, 0.6, anim_tex.id())
+                                }
+                            } else {
+                                let col_idx = (anim.anim_id % 10) as f32;
+                                let row_idx = (anim.anim_id / 10) as f32;
+                                (col_idx / 10.0, row_idx / 10.0, (col_idx + 1.0) / 10.0, (row_idx + 1.0) / 10.0, anim_tex.id())
+                            };
 
-                            painter.image(anim_tex.id(), a_rect, Rect::from_min_max(Pos2::new(u0, v0), Pos2::new(u1, v1)), col);
+                            painter.image(tex_to_render, a_rect, Rect::from_min_max(Pos2::new(u0, v0), Pos2::new(u1, v1)), col);
 
                             if pcx.abs() < (pz * 0.15) && pz < 280.0 {
                                 if targeted_object.as_ref().map(|(_, d, _)| pz < *d).unwrap_or(true) {
@@ -4288,62 +4416,208 @@ impl FrickEditorApp {
                 }
             }
 
-            // 6. RADAR TOPOLÓGICO 1:1 EN LA ESQUINA SUPERIOR DERECHA (INTERACTIVO)
-            if self.radar_display_mode != 2 {
-                let (radar_w, radar_h) = if self.radar_display_mode == 1 {
-                    (320.0_f32, 240.0_f32) // Modo Zoom Grande
-                } else {
-                    (210.0_f32, 160.0_f32) // Modo Normal
+            // 6. RADAR TOPOLÓGICO 1:1 EN LA ESQUINA SUPERIOR DERECHA (INTERACTIVO CON ZOOM & PAN)
+            if self.radar_display_mode != 3 {
+                let (radar_w, radar_h) = match self.radar_display_mode {
+                    1 => (340.0_f32, 260.0_f32), // Modo Grande
+                    2 => (440.0_f32, 330.0_f32), // Modo Extra Grande
+                    _ => (250.0_f32, 190.0_f32), // Modo Normal
                 };
 
-                let radar_rect = Rect::from_min_size(Pos2::new(rect.max.x - radar_w - 12.0, rect.min.y + 12.0), Vec2::new(radar_w, radar_h));
-
-                painter.rect_filled(radar_rect, 6.0, Color32::from_rgba_unmultiplied(12, 16, 24, 220));
-                painter.rect_stroke(radar_rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgb(0, 185, 230)));
-
-                painter.text(
-                    Pos2::new(radar_rect.min.x + 8.0, radar_rect.min.y + 6.0),
-                    egui::Align2::LEFT_TOP,
-                    format!("RADAR 1:1 ({})", cur_room_name),
-                    egui::FontId::proportional(11.0),
-                    Color32::from_rgb(0, 210, 255),
+                let radar_rect = Rect::from_min_size(
+                    Pos2::new(rect.max.x - radar_w - 12.0, rect.min.y + 12.0),
+                    Vec2::new(radar_w, radar_h),
                 );
 
+                // Fondo del radar con estilo HUD táctico
+                painter.rect_filled(radar_rect, 6.0, Color32::from_rgba_unmultiplied(10, 14, 22, 235));
+                painter.rect_stroke(radar_rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgb(0, 195, 240)));
+
+                // Header del Radar con Título y Botones de Control Integrados
+                let header_rect = Rect::from_min_size(radar_rect.min, Vec2::new(radar_w, 24.0));
+                painter.rect_filled(header_rect, 6.0, Color32::from_rgba_unmultiplied(16, 24, 36, 240));
+                painter.line_segment(
+                    [Pos2::new(radar_rect.min.x, radar_rect.min.y + 24.0), Pos2::new(radar_rect.max.x, radar_rect.min.y + 24.0)],
+                    Stroke::new(1.0_f32, Color32::from_rgb(0, 150, 190)),
+                );
+
+                painter.text(
+                    Pos2::new(radar_rect.min.x + 8.0, radar_rect.min.y + 5.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("RADAR 1:1 ({}) [{:.1}x]", cur_room_name, self.radar_zoom),
+                    egui::FontId::proportional(11.0),
+                    Color32::from_rgb(0, 220, 255),
+                );
+
+                // Botonera táctil interactiva sobre el header del radar
+                let btn_y = radar_rect.min.y + 3.0;
+                let mut bx = radar_rect.max.x - 22.0;
+
+                // 1. Botón Ciclar Tamaño [⛶]
+                let size_btn_rect = Rect::from_min_size(Pos2::new(bx, btn_y), Vec2::new(18.0, 18.0));
+                let size_resp = ui.interact(size_btn_rect, egui::Id::new("radar_btn_size"), Sense::click());
+                let size_bg = if size_resp.hovered() { Color32::from_rgb(0, 160, 210) } else { Color32::from_rgb(25, 45, 65) };
+                painter.rect_filled(size_btn_rect, 3.0, size_bg);
+                painter.text(size_btn_rect.center(), egui::Align2::CENTER_CENTER, "⛶", egui::FontId::proportional(11.0), Color32::WHITE);
+                if size_resp.clicked() {
+                    self.radar_display_mode = (self.radar_display_mode + 1) % 3;
+                }
+                bx -= 21.0;
+
+                // 2. Botón Modo Seguir / Global [🎯]
+                let mode_btn_rect = Rect::from_min_size(Pos2::new(bx, btn_y), Vec2::new(18.0, 18.0));
+                let mode_resp = ui.interact(mode_btn_rect, egui::Id::new("radar_btn_mode"), Sense::click());
+                let mode_bg = if self.radar_follow_player { Color32::from_rgb(0, 140, 90) } else { Color32::from_rgb(40, 50, 70) };
+                painter.rect_filled(mode_btn_rect, 3.0, if mode_resp.hovered() { Color32::from_rgb(0, 180, 120) } else { mode_bg });
+                painter.text(mode_btn_rect.center(), egui::Align2::CENTER_CENTER, if self.radar_follow_player { "🎯" } else { "🗺️" }, egui::FontId::proportional(10.0), Color32::WHITE);
+                if mode_resp.clicked() {
+                    self.radar_follow_player = !self.radar_follow_player;
+                }
+                bx -= 23.0;
+
+                // 3. Botón Reset Zoom [1x]
+                let reset_btn_rect = Rect::from_min_size(Pos2::new(bx, btn_y), Vec2::new(20.0, 18.0));
+                let reset_resp = ui.interact(reset_btn_rect, egui::Id::new("radar_btn_reset"), Sense::click());
+                let reset_bg = if reset_resp.hovered() { Color32::from_rgb(0, 160, 210) } else { Color32::from_rgb(25, 45, 65) };
+                painter.rect_filled(reset_btn_rect, 3.0, reset_bg);
+                painter.text(reset_btn_rect.center(), egui::Align2::CENTER_CENTER, "1x", egui::FontId::proportional(9.5), Color32::WHITE);
+                if reset_resp.clicked() {
+                    self.radar_zoom = 1.0;
+                    self.radar_pan_offset = egui::Vec2::ZERO;
+                }
+                bx -= 21.0;
+
+                // 4. Botón Zoom In [+]
+                let zin_btn_rect = Rect::from_min_size(Pos2::new(bx, btn_y), Vec2::new(18.0, 18.0));
+                let zin_resp = ui.interact(zin_btn_rect, egui::Id::new("radar_btn_zin"), Sense::click());
+                let zin_bg = if zin_resp.hovered() { Color32::from_rgb(0, 160, 210) } else { Color32::from_rgb(25, 45, 65) };
+                painter.rect_filled(zin_btn_rect, 3.0, zin_bg);
+                painter.text(zin_btn_rect.center(), egui::Align2::CENTER_CENTER, "+", egui::FontId::proportional(13.0), Color32::WHITE);
+                if zin_resp.clicked() {
+                    self.radar_zoom = (self.radar_zoom * 1.25).min(5.0);
+                }
+                bx -= 21.0;
+
+                // 5. Botón Zoom Out [-]
+                let zout_btn_rect = Rect::from_min_size(Pos2::new(bx, btn_y), Vec2::new(18.0, 18.0));
+                let zout_resp = ui.interact(zout_btn_rect, egui::Id::new("radar_btn_zout"), Sense::click());
+                let zout_bg = if zout_resp.hovered() { Color32::from_rgb(0, 160, 210) } else { Color32::from_rgb(25, 45, 65) };
+                painter.rect_filled(zout_btn_rect, 3.0, zout_bg);
+                painter.text(zout_btn_rect.center(), egui::Align2::CENTER_CENTER, "-", egui::FontId::proportional(14.0), Color32::WHITE);
+                if zout_resp.clicked() {
+                    self.radar_zoom = (self.radar_zoom / 1.25).max(0.5);
+                }
+
+                // Área del mapa (debajo del header)
+                let map_area = Rect::from_min_max(
+                    Pos2::new(radar_rect.min.x + 4.0, radar_rect.min.y + 26.0),
+                    Pos2::new(radar_rect.max.x - 4.0, radar_rect.max.y - 4.0),
+                );
+
+                // Zoom con rueda de ratón interactivo al posicionarse sobre el minimapa
+                let radar_id = egui::Id::new("radar_main_interact");
+                let radar_interact = ui.interact(map_area, radar_id, Sense::click_and_drag());
+                if radar_interact.hovered() {
+                    let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                    if scroll > 0.0 {
+                        self.radar_zoom = (self.radar_zoom * 1.15).min(5.0);
+                    } else if scroll < 0.0 {
+                        self.radar_zoom = (self.radar_zoom / 1.15).max(0.5);
+                    }
+                }
+
+                // Clip rect estricto para que ningún elemento sobresalga del marco del minimapa
+                let radar_painter = painter.with_clip_rect(map_area);
+
+                // Cálculo de escala, centrado y coordenadas relativas
+                let room_w = (max_x - min_x).max(100.0);
+                let room_h = (max_y - min_y).max(100.0);
+                let base_scale = ((map_area.width() - 16.0) / room_w).min((map_area.height() - 16.0) / room_h);
+                let active_scale = base_scale * self.radar_zoom;
+                let radar_center = map_area.center();
+
                 let to_radar = |gx: f32, gy: f32| -> Pos2 {
-                    let nx = (gx - min_x) / (max_x - min_x).max(1.0);
-                    let ny = (gy - min_y) / (max_y - min_y).max(1.0);
-                    Pos2::new(
-                        radar_rect.min.x + 8.0 + (nx * (radar_w - 16.0)),
-                        radar_rect.min.y + 24.0 + (ny * (radar_h - 32.0)),
-                    )
+                    if self.radar_follow_player {
+                        let rx = radar_center.x + (gx - self.maze_player_x) * active_scale;
+                        let ry = radar_center.y + (gy - self.maze_player_y) * active_scale;
+                        Pos2::new(rx, ry)
+                    } else {
+                        let cx = (min_x + max_x) * 0.5 + self.radar_pan_offset.x;
+                        let cy = (min_y + max_y) * 0.5 + self.radar_pan_offset.y;
+                        let rx = radar_center.x + (gx - cx) * active_scale;
+                        let ry = radar_center.y + (gy - cy) * active_scale;
+                        Pos2::new(rx, ry)
+                    }
                 };
 
+                // Cuadrícula sutil de referencia táctica en el radar
+                let grid_step = 128.0 * active_scale;
+                if grid_step > 15.0 && grid_step < 120.0 {
+                    let start_x = to_radar(min_x, min_y).x;
+                    let mut gx = start_x;
+                    while gx < map_area.max.x {
+                        if gx > map_area.min.x {
+                            radar_painter.line_segment(
+                                [Pos2::new(gx, map_area.min.y), Pos2::new(gx, map_area.max.y)],
+                                Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(0, 160, 200, 30)),
+                            );
+                        }
+                        gx += grid_step;
+                    }
+                    let start_y = to_radar(min_x, min_y).y;
+                    let mut gy = start_y;
+                    while gy < map_area.max.y {
+                        if gy > map_area.min.y {
+                            radar_painter.line_segment(
+                                [Pos2::new(map_area.min.x, gy), Pos2::new(map_area.max.x, gy)],
+                                Stroke::new(0.5_f32, Color32::from_rgba_unmultiplied(0, 160, 200, 30)),
+                            );
+                        }
+                        gy += grid_step;
+                    }
+                }
+
+                // Dibujar elementos arquitectónicos e instancias
                 if let Some(rd) = &active_room_data {
                     for inst in &rd.instances {
-                        if inst.object.contains("Barrier") {
-                            let hw = inst.sx * 16.0;
-                            let hh = inst.sy * 16.0;
-                            let p1 = to_radar(inst.x as f32 - hw, inst.y as f32 - hh);
-                            let p2 = to_radar(inst.x as f32 + hw, inst.y as f32 + hh);
-                            painter.rect_filled(Rect::from_min_max(p1, p2), 1.0, Color32::from_rgb(255, 60, 60));
-                        } else if inst.object.contains("Wall") {
-                            let hw = inst.sx * 16.0;
-                            let hh = inst.sy * 16.0;
-                            let p1 = to_radar(inst.x as f32 - hw, inst.y as f32 - hh);
-                            let p2 = to_radar(inst.x as f32 + hw, inst.y as f32 + hh);
-                            painter.rect_filled(Rect::from_min_max(p1, p2), 1.0, Color32::from_rgb(0, 185, 230));
-                        } else if inst.object.contains("Escape") {
+                        let obj = &inst.object;
+                        let hw = inst.sx * 16.0;
+                        let hh = inst.sy * 16.0;
+                        let p1 = to_radar(inst.x as f32 - hw, inst.y as f32 - hh);
+                        let p2 = to_radar(inst.x as f32 + hw, inst.y as f32 + hh);
+                        let inst_rect = Rect::from_min_max(p1, p2);
+
+                        if obj.contains("Wall") && !obj.contains("Table") && !obj.contains("Stage") {
+                            radar_painter.rect_filled(inst_rect, 1.0, Color32::from_rgb(0, 190, 240));
+                        } else if obj.contains("Table") {
+                            radar_painter.rect_filled(inst_rect, 1.0, Color32::from_rgb(220, 70, 70));
+                        } else if obj.contains("Stage") {
+                            radar_painter.rect_filled(inst_rect, 1.0, Color32::from_rgb(180, 130, 40));
+                        } else if obj.contains("PiratesCove") {
                             let rp = to_radar(inst.x as f32, inst.y as f32);
-                            painter.circle_filled(rp, 3.5, Color32::from_rgb(50, 240, 110));
-                        } else if inst.object.contains("Interaction") || inst.object.contains("Shop") {
+                            let cov_r = (80.0 * active_scale).max(4.0);
+                            radar_painter.circle_filled(rp, cov_r, Color32::from_rgba_unmultiplied(160, 30, 60, 160));
+                            radar_painter.circle_stroke(rp, cov_r, Stroke::new(1.0_f32, Color32::from_rgb(240, 80, 120)));
+                        } else if obj.contains("Arcade") {
                             let rp = to_radar(inst.x as f32, inst.y as f32);
-                            painter.circle_filled(rp, 3.0, Color32::from_rgb(0, 230, 255));
-                        } else if inst.object.contains("Arcade") || inst.object.contains("Stage") || inst.object.contains("Carousel") {
+                            radar_painter.circle_filled(rp, 3.0, Color32::from_rgb(255, 170, 50));
+                        } else if obj.contains("Escape") {
                             let rp = to_radar(inst.x as f32, inst.y as f32);
-                            painter.circle_filled(rp, 2.5, Color32::from_rgb(255, 170, 50));
-                        } else if inst.object.contains("Animatronic") || inst.object.contains("Hatchet") {
+                            radar_painter.circle_filled(rp, 4.0, Color32::from_rgb(50, 255, 120));
+                        } else if obj.contains("Animatronic") {
+                            let is_special = obj.contains("Random")
+                                || obj.contains("Special")
+                                || (self.selected_salvage_location == SalvageLocationIndex::Location1Fnaf1 && (inst.x - 896).abs() < 30 && (inst.y - 208).abs() < 30);
                             let rp = to_radar(inst.x as f32, inst.y as f32);
-                            painter.circle_filled(rp, 3.0, Color32::from_rgb(255, 215, 0));
+                            if is_special {
+                                // Popgoes / Especial: marcador violeta y dorado
+                                radar_painter.circle_filled(rp, 5.5, Color32::from_rgb(180, 60, 255));
+                                radar_painter.circle_stroke(rp, 7.0, Stroke::new(1.5_f32, Color32::from_rgb(255, 215, 0)));
+                            } else {
+                                // Animatrónico normal: marcador dorado
+                                radar_painter.circle_filled(rp, 3.5, Color32::from_rgb(255, 215, 0));
+                                radar_painter.circle_stroke(rp, 4.5, Stroke::new(1.0_f32, Color32::WHITE));
+                            }
                         }
                     }
                 }
@@ -4352,32 +4626,39 @@ impl FrickEditorApp {
                 for c_obj in &self.project.custom_placed_objects {
                     if c_obj.enabled && c_obj.target_room == cur_room_name {
                         let crp = to_radar(c_obj.x, c_obj.y);
-                        painter.circle_filled(crp, 4.0, Color32::from_rgb(255, 215, 0));
-                        painter.circle_stroke(crp, 5.0, Stroke::new(1.0_f32, Color32::WHITE));
+                        radar_painter.circle_filled(crp, 4.5, Color32::from_rgb(255, 215, 0));
+                        radar_painter.circle_stroke(crp, 6.0, Stroke::new(1.5_f32, Color32::WHITE));
                     }
                 }
 
+                // Dibujar al Jugador y su Cono de Visión FOV
                 let player_rp = to_radar(self.maze_player_x, self.maze_player_y);
-                painter.circle_filled(player_rp, 4.5, Color32::from_rgb(0, 255, 180));
-                painter.circle_stroke(player_rp, 5.5, Stroke::new(1.0_f32, Color32::WHITE));
+                radar_painter.circle_filled(player_rp, 5.0, Color32::from_rgb(0, 255, 180));
+                radar_painter.circle_stroke(player_rp, 6.5, Stroke::new(1.5_f32, Color32::WHITE));
 
-                let cone_len = if self.radar_display_mode == 1 { 32.0_f32 } else { 22.0_f32 };
+                let cone_len = (36.0 * (self.radar_zoom.sqrt())).clamp(20.0, 60.0);
                 let c_p1 = Pos2::new(player_rp.x + ((rad - 0.4).cos() * cone_len), player_rp.y + ((rad - 0.4).sin() * cone_len));
                 let c_p2 = Pos2::new(player_rp.x + ((rad + 0.4).cos() * cone_len), player_rp.y + ((rad + 0.4).sin() * cone_len));
-                painter.add(egui::Shape::convex_polygon(
+                radar_painter.add(egui::Shape::convex_polygon(
                     vec![player_rp, c_p1, c_p2],
-                    Color32::from_rgba_unmultiplied(255, 235, 90, 45),
-                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 235, 90, 160)),
+                    Color32::from_rgba_unmultiplied(255, 235, 90, 55),
+                    Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(255, 235, 90, 180)),
                 ));
 
-                let radar_id = egui::Id::new("radar_click_drag");
-                let radar_interact = ui.interact(radar_rect, radar_id, Sense::click_and_drag());
+                // Clic / Arrastre en el minimapa para teletransportarse instantáneamente
                 if radar_interact.clicked() || radar_interact.dragged() {
                     if let Some(mp) = radar_interact.hover_pos() {
-                        let nx = ((mp.x - radar_rect.min.x - 8.0) / (radar_w - 16.0)).clamp(0.0, 1.0);
-                        let ny = ((mp.y - radar_rect.min.y - 24.0) / (radar_h - 32.0)).clamp(0.0, 1.0);
-                        self.maze_player_x = min_x + (nx * (max_x - min_x));
-                        self.maze_player_y = min_y + (ny * (max_y - min_y));
+                        if self.radar_follow_player {
+                            let dx = (mp.x - radar_center.x) / active_scale;
+                            let dy = (mp.y - radar_center.y) / active_scale;
+                            self.maze_player_x += dx * 0.4;
+                            self.maze_player_y += dy * 0.4;
+                        } else {
+                            let cx = (min_x + max_x) * 0.5 + self.radar_pan_offset.x;
+                            let cy = (min_y + max_y) * 0.5 + self.radar_pan_offset.y;
+                            self.maze_player_x = cx + (mp.x - radar_center.x) / active_scale;
+                            self.maze_player_y = cy + (mp.y - radar_center.y) / active_scale;
+                        }
                     }
                 }
             }
