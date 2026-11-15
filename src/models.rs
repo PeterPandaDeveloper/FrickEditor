@@ -319,6 +319,34 @@ pub struct AnimatronicProject {
     pub salvage_placement: CustomSalvagePlacement,
     #[serde(default)]
     pub custom_placed_objects: Vec<PlacedCustomObject>,
+    #[serde(default)]
+    pub inventory: MazeInventory,
+}
+
+/// Sistema de Inventario interactivo del jugador en los laberintos/salvamento 3D
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct MazeInventory {
+    pub has_crowbar: bool,
+    pub crowbar_count: u32,
+    pub has_hatchet: bool,
+    pub has_giftbox: bool,
+    pub has_cameras: bool,
+    pub opened_crates: Vec<String>,
+    pub collected_items: Vec<String>,
+}
+
+impl Default for MazeInventory {
+    fn default() -> Self {
+        Self {
+            has_crowbar: false,
+            crowbar_count: 0,
+            has_hatchet: false,
+            has_giftbox: false,
+            has_cameras: false,
+            opened_crates: Vec::new(),
+            collected_items: Vec::new(),
+        }
+    }
 }
 
 /// Nodos de ruta en el mapa de cámaras (MainLocationMap)
@@ -573,6 +601,7 @@ impl Default for AnimatronicProject {
             advanced: AdvancedMechanicsConfig::default(),
             salvage_placement: CustomSalvagePlacement::default(),
             custom_placed_objects: Vec::new(),
+            inventory: MazeInventory::default(),
         }
     }
 }

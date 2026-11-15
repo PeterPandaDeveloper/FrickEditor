@@ -117,6 +117,23 @@ struct FrickEditorApp {
     active_profile: ActiveGameProfile,
     integrity_report: Option<GameIntegrityReport>,
     show_integrity_modal: bool,
+    // Modales Interactivos en Laberintos 3D (Crowbar & Cajas Vultur)
+    active_interactive_modal: Option<InteractiveModalType>,
+    maze_hud_notification: Option<(String, f32)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum InteractiveModalType {
+    TakeCrowbar {
+        location_id: String,
+        coords: (i32, i32),
+    },
+    InspectCrate {
+        crate_id: String,
+        location_id: String,
+        coords: (i32, i32),
+        is_opened: bool,
+    },
 }
 
 impl FrickEditorApp {
@@ -213,6 +230,8 @@ impl FrickEditorApp {
             active_profile: initial_profile,
             integrity_report: None,
             show_integrity_modal: false,
+            active_interactive_modal: None,
+            maze_hud_notification: None,
         }
     }
 
@@ -767,6 +786,9 @@ impl eframe::App for FrickEditorApp {
                 ActiveTab::Environment3DBuilder => self.ui_environment_3d_builder_tab(ctx, ui),
             });
         });
+
+        // Modales Interactivos en tiempo real (Crowbar, Cajas Vultur)
+        self.render_interactive_modals(ctx);
 
         // ==========================================================
         // NOTIFICACIÓN TOAST FLOTANTE EN ESQUINA INFERIOR DERECHA
@@ -3012,7 +3034,7 @@ impl FrickEditorApp {
                 } else if obj.contains("Scooper") {
                     "sMazeDecor_Scooper"
                 } else {
-                    "sMazeTex_SLVentWall"
+                    "sMazeWall_ScoopingRoom"
                 }
             },
         };
@@ -4020,6 +4042,131 @@ impl FrickEditorApp {
                 }
             }
 
+            // ==============================================================
+            // CAJAS DE VULTUR ENT. (sMaze_VultureBox) & PALANCAS (sMazeCrowbar)
+            // ==============================================================
+            // Cajas: "tan grandes como Withered Bonnie" (~88px alto, 48px ancho/profundidad)
+            // Crowbars: una sola en pared por locación ("menos en circus baby")
+            let (crate_pos, crowbar_pos): (Option<(f32, f32)>, Option<(f32, f32)>) = match self.selected_salvage_location {
+                SalvageLocationIndex::Location1Fnaf1 => {
+                    (Some((256.0, 184.0)), Some((960.0, 336.0)))
+                },
+                SalvageLocationIndex::Location2Fnaf2 => {
+                    (Some((808.0, 112.0)), Some((1000.0, 112.0)))
+                },
+                SalvageLocationIndex::Location3Fnaf3 => {
+                    (Some((656.0, 488.0)), Some((720.0, 560.0)))
+                },
+                SalvageLocationIndex::Location4WilliamWoods => {
+                    (Some((1656.0, 336.0)), Some((1344.0, 640.0)))
+                },
+                SalvageLocationIndex::Location5SisterLocation => {
+                    (Some((1232.0, 256.0)), None) // ¡MENOS en Circus Baby!
+                },
+            };
+
+            let cur_crate_id = format!("crate_{}", cur_room_name);
+            let is_cur_crate_opened = self.project.inventory.opened_crates.contains(&cur_crate_id);
+
+            if let Some((cx, cy)) = crate_pos {
+                let hw = 24.0_f32;
+                let hh = 24.0_f32;
+                let x0 = cx - hw;
+                let x1 = cx + hw;
+                let y0 = cy - hh;
+                let y1 = cy + hh;
+
+                let (h_top, h_bot) = (40.0_f32, 48.0_f32); // Total 88px, escala de Withered Bonnie
+                let tex_box = self.get_maze_texture(ctx, "sMaze_VultureBox");
+                let box_tid = tex_box.as_ref().map(|t| t.id());
+                let tex_wood = self.get_maze_texture(ctx, "sMazeTex_Wood");
+                let wood_tid = tex_wood.as_ref().map(|t| t.id());
+
+                let crate_obj_tag = if is_cur_crate_opened {
+                    format!("oMaze_VultureBox_Open#{}", cur_crate_id)
+                } else {
+                    format!("oMaze_VultureBox#{}", cur_crate_id)
+                };
+
+                let w_len = x1 - x0;
+                let h_len = y1 - y0;
+                let coords = (cx as i32, cy as i32);
+
+                wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x1, y2: y0, len: w_len, h_top, h_bot, tex_id: box_tid, obj_name: crate_obj_tag.clone(), coords, face_type: 0 });
+                wall_segments.push(WallSegment { x1: x0, y1: y1, x2: x1, y2: y1, len: w_len, h_top, h_bot, tex_id: box_tid, obj_name: crate_obj_tag.clone(), coords, face_type: 0 });
+                wall_segments.push(WallSegment { x1: x0, y1: y0, x2: x0, y2: y1, len: h_len, h_top, h_bot, tex_id: box_tid, obj_name: crate_obj_tag.clone(), coords, face_type: 0 });
+                wall_segments.push(WallSegment { x1: x1, y1: y0, x2: x1, y2: y1, len: h_len, h_top, h_bot, tex_id: box_tid, obj_name: crate_obj_tag.clone(), coords, face_type: 0 });
+
+                // Tapa superior de madera de la caja
+                let dz = -40.0_f32; // h_top
+                let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                let mut scr_corners = Vec::new();
+                let mut pz_sum = 0.0_f32;
+                let mut all_front = true;
+                for (wx, wy) in corners {
+                    let cdx = wx - self.maze_player_x;
+                    let cdy = wy - self.maze_player_y;
+                    let cpz = cdx * cos_yaw + cdy * sin_yaw;
+                    let cpcx = -cdx * sin_yaw + cdy * cos_yaw;
+                    if cpz <= 4.0 { all_front = false; break; }
+                    pz_sum += cpz;
+                    let csx = rect.center().x + (cpcx / cpz) * focal;
+                    let csy = horizon_y - (dz / cpz) * focal;
+                    scr_corners.push(Pos2::new(csx, csy));
+                }
+                if all_front && scr_corners.len() == 4 {
+                    let avg_pz = pz_sum / 4.0;
+                    let cap_shade = ((1.0 - (avg_pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.12, 1.0);
+                    let cap_u8 = (255.0 * cap_shade) as u8;
+                    let cap_col = Color32::from_rgba_unmultiplied(cap_u8, cap_u8, cap_u8, 255);
+                    horizontal_caps.push(HorizontalCap {
+                        p0: scr_corners[0], p1: scr_corners[1], p2: scr_corners[2], p3: scr_corners[3],
+                        avg_pz, tex_id: wood_tid, col: cap_col,
+                        u_max: 1.0, v_max: 1.0,
+                    });
+                }
+            }
+
+            let cur_crowbar_id = format!("crowbar_{}", cur_room_name);
+            let is_cur_crowbar_collected = self.project.inventory.collected_items.contains(&cur_crowbar_id);
+
+            if let Some((cbx, cby)) = crowbar_pos {
+                if !is_cur_crowbar_collected {
+                    let dx = cbx - self.maze_player_x;
+                    let dy = cby - self.maze_player_y;
+                    let pz = dx * cos_yaw + dy * sin_yaw;
+                    let pcx = -dx * sin_yaw + dy * cos_yaw;
+
+                    if pz > 6.0 && pz < 700.0 {
+                        let screen_x = rect.center().x + (pcx / pz) * focal;
+                        let prop_w = (32.0_f32 / pz) * focal;
+                        let prop_h = (32.0_f32 / pz) * focal;
+                        let ground_y = horizon_y + (16.0_f32 / pz) * focal; // Montada en la pared a media altura
+
+                        let p_rect = Rect::from_min_max(
+                            Pos2::new(screen_x - (prop_w * 0.5), ground_y - prop_h),
+                            Pos2::new(screen_x + (prop_w * 0.5), ground_y)
+                        );
+
+                        let dist_shade = ((1.0 - (pz / 650.0)).clamp(0.0, 1.0) * flash_intensity).clamp(0.15, 1.0);
+                        let col = Color32::from_rgba_unmultiplied((255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, (255.0 * dist_shade) as u8, 255);
+                        let tex_cb = self.get_maze_texture(ctx, "sMazeCrowbar");
+                        let cb_tid = tex_cb.as_ref().map(|t| t.id());
+
+                        props.push(PropBillboard {
+                            pz,
+                            pcx,
+                            screen_x,
+                            rect: p_rect,
+                            col,
+                            tex_id: cb_tid,
+                            obj_name: format!("oMazeCrowbar#{}", cur_crowbar_id),
+                            coords: (cbx as i32, cby as i32),
+                        });
+                    }
+                }
+            }
+
             let num_rays = 240;
             let col_w = rect.width() / num_rays as f32;
             let mut z_buffer: Vec<f32> = vec![9999.0; num_rays];
@@ -4123,14 +4270,17 @@ impl FrickEditorApp {
                         }
                     };
 
-                    let is_pure_wall = hit.obj_name.contains("Wall")
+                    let is_pure_wall = (hit.obj_name.contains("Wall") || hit.obj_name.contains("Flat"))
                         && !hit.obj_name.contains("Table")
                         && !hit.obj_name.contains("Arcade")
                         && !hit.obj_name.contains("Door")
                         && !hit.obj_name.contains("Stage")
                         && !hit.obj_name.contains("Counter")
                         && !hit.obj_name.contains("Shelf")
-                        && !hit.obj_name.contains("Bed");
+                        && !hit.obj_name.contains("Bed")
+                        && !hit.obj_name.contains("VultureBox")
+                        && !hit.obj_name.contains("Crate")
+                        && !hit.obj_name.contains("Crowbar");
 
                     if self.wall_style_tron && is_pure_wall {
                         // 1. Panel base oscuro minimalista con tinte por locación
@@ -4138,8 +4288,14 @@ impl FrickEditorApp {
                             SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(10, 14, 20),
                             SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(18, 14, 12),
                             SalvageLocationIndex::Location3Fnaf3 => Color32::from_rgb(10, 18, 12),
-                            SalvageLocationIndex::Location4WilliamWoods => Color32::from_rgb(14, 10, 22),
-                            SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(12, 16, 26),
+                            SalvageLocationIndex::Location4WilliamWoods => {
+                                if hit.coords.0 > 900 {
+                                    Color32::from_rgb(10, 24, 16) // Bosque sombrío exterior
+                                } else {
+                                    Color32::from_rgb(22, 14, 26) // Casa interior Afton
+                                }
+                            },
+                            SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(10, 16, 28),
                         };
                         let p_shade = (dist_shade * angle_shade).clamp(0.10, 0.90);
                         let p_col = Color32::from_rgba_unmultiplied(
@@ -4155,8 +4311,14 @@ impl FrickEditorApp {
                             SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(0, 235, 255), // Cyan eléctrico
                             SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(255, 165, 30), // Ámbar neón
                             SalvageLocationIndex::Location3Fnaf3 => Color32::from_rgb(45, 255, 110), // Verde esmeralda
-                            SalvageLocationIndex::Location4WilliamWoods => Color32::from_rgb(160, 95, 255), // Violeta profundo
-                            SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(255, 50, 160), // Magenta neón
+                            SalvageLocationIndex::Location4WilliamWoods => {
+                                if hit.coords.0 > 900 {
+                                    Color32::from_rgb(45, 230, 110) // Verde pino fluorescente bosque
+                                } else {
+                                    Color32::from_rgb(190, 80, 255) // Púrpura Midnight Motorist interior
+                                }
+                            },
+                            SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(0, 220, 255), // Cyan brillante búnker Sister Location
                         };
                         let n_bright = (dist_shade * flash_intensity).clamp(0.25, 1.0);
                         let neon_col = Color32::from_rgba_unmultiplied(
@@ -4405,14 +4567,50 @@ impl FrickEditorApp {
                 painter.line_segment([Pos2::new(cross_center.x, cross_center.y - cross_size), Pos2::new(cross_center.x, cross_center.y + cross_size)], Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(100, 220, 255, 180)));
                 painter.circle_stroke(cross_center, 3.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 200)));
 
-                if let Some((obj_name, depth, coords)) = targeted_object {
-                    let clean_obj = obj_name.replace("oMazeProp_", "").replace("oMazeWall_", "").replace("oMazeFloorDecoration_", "");
-                    let badge_text = format!("🎯 {} | {:.0}px | ({}, {})", clean_obj, depth, coords.0, coords.1);
+                if let Some((obj_name, depth, coords)) = &targeted_object {
+                    let (badge_text, border_col) = if obj_name.starts_with("oMazeCrowbar") {
+                        (format!("🔧 Crowbar | {:.0}px | [E] Take Crowbar", depth), Color32::from_rgb(0, 240, 255))
+                    } else if obj_name.starts_with("oMaze_VultureBox_Open") {
+                        (format!("📦 Vultur Crate | {:.0}px | [Opened & Empty]", depth), Color32::from_rgb(150, 150, 150))
+                    } else if obj_name.starts_with("oMaze_VultureBox") {
+                        if self.project.inventory.has_crowbar {
+                            (format!("📦 Vultur Crate | {:.0}px | [E] Pry Open with Crowbar", depth), Color32::from_rgb(255, 200, 40))
+                        } else {
+                            (format!("📦 Vultur Crate | {:.0}px | [Locked - Requires Crowbar]", depth), Color32::from_rgb(255, 90, 90))
+                        }
+                    } else {
+                        let clean_obj = obj_name.replace("oMazeProp_", "").replace("oMazeWall_", "").replace("oMazeFloorDecoration_", "");
+                        (format!("🎯 {} | {:.0}px | ({}, {})", clean_obj, depth, coords.0, coords.1), Color32::from_rgb(0, 200, 255))
+                    };
                     let badge_pos = Pos2::new(cross_center.x, cross_center.y + 24.0);
                     let badge_rect = Rect::from_center_size(badge_pos, Vec2::new(badge_text.len() as f32 * 7.5 + 16.0, 22.0));
-                    painter.rect_filled(badge_rect, 4.0, Color32::from_rgba_unmultiplied(12, 18, 26, 215));
-                    painter.rect_stroke(badge_rect, 4.0, Stroke::new(1.0_f32, Color32::from_rgb(0, 200, 255)));
-                    painter.text(badge_pos, egui::Align2::CENTER_CENTER, badge_text, egui::FontId::monospace(11.0), Color32::from_rgb(120, 230, 255));
+                    painter.rect_filled(badge_rect, 4.0, Color32::from_rgba_unmultiplied(12, 18, 26, 225));
+                    painter.rect_stroke(badge_rect, 4.0, Stroke::new(1.2_f32, border_col));
+                    painter.text(badge_pos, egui::Align2::CENTER_CENTER, badge_text, egui::FontId::monospace(11.0), border_col);
+                }
+
+                // Detección de Tecla [E] para Interacción Táctica en Vivo
+                let e_pressed = ui.input(|i| i.key_pressed(egui::Key::E));
+                if e_pressed && self.active_interactive_modal.is_none() {
+                    if let Some((obj_name, depth, coords)) = &targeted_object {
+                        if *depth < 280.0 {
+                            if obj_name.starts_with("oMazeCrowbar") {
+                                self.active_interactive_modal = Some(InteractiveModalType::TakeCrowbar {
+                                    location_id: cur_room_name.to_string(),
+                                    coords: *coords,
+                                });
+                            } else if obj_name.starts_with("oMaze_VultureBox") {
+                                let is_opened = obj_name.contains("Open");
+                                let crate_id = format!("crate_{}", cur_room_name);
+                                self.active_interactive_modal = Some(InteractiveModalType::InspectCrate {
+                                    crate_id,
+                                    location_id: cur_room_name.to_string(),
+                                    coords: *coords,
+                                    is_opened,
+                                });
+                            }
+                        }
+                    }
                 }
             }
 
@@ -4631,6 +4829,31 @@ impl FrickEditorApp {
                     }
                 }
 
+                // Dibujar Caja de Vultur en el Radar
+                if let Some((cx, cy)) = crate_pos {
+                    let crp = to_radar(cx, cy);
+                    let is_op = self.project.inventory.opened_crates.contains(&cur_crate_id);
+                    let (c_bg, c_stroke) = if is_op {
+                        (Color32::from_rgb(100, 80, 60), Color32::from_rgb(140, 120, 90))
+                    } else {
+                        (Color32::from_rgb(255, 190, 40), Color32::WHITE)
+                    };
+                    let cr_box = Rect::from_center_size(crp, Vec2::new(10.0, 10.0));
+                    radar_painter.rect_filled(cr_box, 2.0, c_bg);
+                    radar_painter.rect_stroke(cr_box, 2.0, Stroke::new(1.2_f32, c_stroke));
+                    radar_painter.text(crp, egui::Align2::CENTER_CENTER, "📦", egui::FontId::proportional(8.0), Color32::BLACK);
+                }
+
+                // Dibujar Crowbar en el Radar (si no ha sido recogida)
+                if let Some((cbx, cby)) = crowbar_pos {
+                    if !self.project.inventory.collected_items.contains(&cur_crowbar_id) {
+                        let cbrp = to_radar(cbx, cby);
+                        radar_painter.circle_filled(cbrp, 4.5, Color32::from_rgb(0, 240, 255));
+                        radar_painter.circle_stroke(cbrp, 6.0, Stroke::new(1.2_f32, Color32::WHITE));
+                        radar_painter.text(cbrp, egui::Align2::CENTER_CENTER, "🔨", egui::FontId::proportional(7.0), Color32::BLACK);
+                    }
+                }
+
                 // Dibujar al Jugador y su Cono de Visión FOV
                 let player_rp = to_radar(self.maze_player_x, self.maze_player_y);
                 radar_painter.circle_filled(player_rp, 5.0, Color32::from_rgb(0, 255, 180));
@@ -4681,6 +4904,40 @@ impl FrickEditorApp {
                 egui::FontId::proportional(11.0),
                 Color32::from_rgb(110, 220, 255),
             );
+
+            // HUD Superior Central: Inventario del Jugador
+            let inv = &self.project.inventory;
+            let inv_hud_pos = Pos2::new(rect.center().x, rect.min.y + 20.0);
+            let inv_text = format!(
+                "🎒 INVENTORY: [🔧 Crowbar: {}]  [🪓 Hatchet: {}]  [🎁 Gift: {}]  [📷 Cam: {}]",
+                if inv.has_crowbar { format!("x{}", inv.crowbar_count) } else { "None".to_string() },
+                if inv.has_hatchet { "Yes" } else { "0" },
+                if inv.has_giftbox { "Yes" } else { "0" },
+                if inv.has_cameras { "Yes" } else { "0" },
+            );
+            let inv_rect = Rect::from_center_size(inv_hud_pos, Vec2::new(inv_text.len() as f32 * 7.5 + 24.0, 26.0));
+            painter.rect_filled(inv_rect, 5.0, Color32::from_rgba_unmultiplied(12, 16, 24, 230));
+            let inv_border_col = if inv.has_crowbar {
+                Color32::from_rgb(0, 230, 255)
+            } else {
+                Color32::from_rgba_unmultiplied(100, 150, 180, 120)
+            };
+            painter.rect_stroke(inv_rect, 5.0, Stroke::new(1.0_f32, inv_border_col));
+            painter.text(inv_hud_pos, egui::Align2::CENTER_CENTER, inv_text, egui::FontId::monospace(11.0), Color32::from_rgb(180, 235, 255));
+
+            // Banner flotante de Notificación HUD (feedback interactivo instantáneo)
+            if let Some((notif_msg, rem_time)) = &mut self.maze_hud_notification {
+                let notif_pos = Pos2::new(rect.center().x, rect.min.y + 54.0);
+                let notif_rect = Rect::from_center_size(notif_pos, Vec2::new(notif_msg.len() as f32 * 7.5 + 32.0, 28.0));
+                let alpha = (*rem_time / 1.0).clamp(0.0, 1.0);
+                painter.rect_filled(notif_rect, 6.0, Color32::from_rgba_unmultiplied(20, 35, 45, (240.0 * alpha) as u8));
+                painter.rect_stroke(notif_rect, 6.0, Stroke::new(1.5_f32, Color32::from_rgba_unmultiplied(0, 255, 180, (255.0 * alpha) as u8)));
+                painter.text(notif_pos, egui::Align2::CENTER_CENTER, notif_msg.as_str(), egui::FontId::proportional(12.5), Color32::from_rgba_unmultiplied(100, 255, 200, (255.0 * alpha) as u8));
+                *rem_time -= ui.input(|i| i.stable_dt);
+                if *rem_time <= 0.0 {
+                    self.maze_hud_notification = None;
+                }
+            }
 
             // HUD Inferior: Coordenadas, Controles y Brújula Rápida
             let hud_bottom = Rect::from_min_size(Pos2::new(rect.min.x + 12.0, rect.max.y - 36.0), Vec2::new(640.0, 26.0));
@@ -5253,5 +5510,108 @@ impl FrickEditorApp {
                     self.save_placed_objects_log();
                 }
             });
+    }
+
+    fn render_interactive_modals(&mut self, ctx: &egui::Context) {
+        if let Some(modal) = self.active_interactive_modal.clone() {
+            let mut close = false;
+            match modal {
+                InteractiveModalType::TakeCrowbar { location_id, coords } => {
+                    egui::Window::new(RichText::new("🔧 Crowbar Found").strong().color(Color32::from_rgb(0, 220, 255)))
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                        .fixed_size([380.0, 190.0])
+                        .show(ctx, |ui| {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("🔧").size(34.0));
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Do you want to take the Crowbar?").strong().size(15.0).color(Color32::WHITE));
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(format!("Location: {} at ({}, {})\nA heavy iron tool used to pry open nailed wooden crates.", location_id, coords.0, coords.1)).size(11.5).color(Color32::from_rgb(180, 200, 220)));
+                                });
+                            });
+                            ui.add_space(14.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if ui.button(RichText::new("  Take Crowbar  ").strong().color(Color32::from_rgb(20, 240, 140))).clicked() {
+                                    self.project.inventory.has_crowbar = true;
+                                    self.project.inventory.crowbar_count += 1;
+                                    let item_key = format!("crowbar_{}", location_id);
+                                    if !self.project.inventory.collected_items.contains(&item_key) {
+                                        self.project.inventory.collected_items.push(item_key);
+                                    }
+                                    self.maze_hud_notification = Some(("✨ Picked up Crowbar! Added to inventory.".to_string(), 3.5));
+                                    self.show_toast("🔧 Crowbar added to inventory!".to_string(), false);
+                                    close = true;
+                                }
+                                if ui.button(RichText::new("  Leave it  ").color(Color32::from_rgb(200, 200, 200))).clicked() {
+                                    close = true;
+                                }
+                            });
+                        });
+                },
+                InteractiveModalType::InspectCrate { crate_id, location_id, coords, is_opened } => {
+                    let title = if is_opened {
+                        "📦 Vultur Ent. Crate (Opened)"
+                    } else {
+                        "📦 Vultur Ent. Supply Crate"
+                    };
+                    egui::Window::new(RichText::new(title).strong().color(Color32::from_rgb(255, 200, 60)))
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                        .fixed_size([420.0, 210.0])
+                        .show(ctx, |ui| {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("📦").size(36.0));
+                                ui.vertical(|ui| {
+                                    if is_opened {
+                                        ui.label(RichText::new("Crate is already open and empty.").strong().size(15.0).color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("All parts, blueprints and tokens have already been recovered from this crate.").size(12.0).color(Color32::from_rgb(180, 200, 220)));
+                                    } else if self.project.inventory.has_crowbar {
+                                        ui.label(RichText::new("Use your Crowbar to pry open this crate?").strong().size(15.0).color(Color32::WHITE));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new(format!("Location: {} at ({}, {})\nHeavy wooden crate stamped with VULTUR ENT. seal.\nYour crowbar can easily breach the wooden lid.", location_id, coords.0, coords.1)).size(12.0).color(Color32::from_rgb(180, 200, 220)));
+                                    } else {
+                                        ui.label(RichText::new("The crate is nailed shut!").strong().size(15.0).color(Color32::from_rgb(255, 100, 100)));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("[LOCKED - Requires a Crowbar to pry open]\nFind a Crowbar mounted on a wall in the maze to break open this container.").size(12.0).color(Color32::from_rgb(220, 180, 180)));
+                                    }
+                                });
+                            });
+                            ui.add_space(14.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if !is_opened && self.project.inventory.has_crowbar {
+                                    if ui.button(RichText::new("  Pry Open with Crowbar  ").strong().color(Color32::from_rgb(20, 240, 140))).clicked() {
+                                        if !self.project.inventory.opened_crates.contains(&crate_id) {
+                                            self.project.inventory.opened_crates.push(crate_id.clone());
+                                        }
+                                        self.maze_hud_notification = Some(("🔓 Crate pried open! Found prototype animatronic schematics & spare parts!".to_string(), 4.0));
+                                        self.show_toast("📦 Vultur Crate opened successfully!".to_string(), false);
+                                        close = true;
+                                    }
+                                    if ui.button(RichText::new("  Leave it  ").color(Color32::from_rgb(200, 200, 200))).clicked() {
+                                        close = true;
+                                    }
+                                } else {
+                                    if ui.button(RichText::new("  Close  ").strong()).clicked() {
+                                        close = true;
+                                    }
+                                }
+                            });
+                        });
+                }
+            }
+            if close {
+                self.active_interactive_modal = None;
+            }
+        }
     }
 }
