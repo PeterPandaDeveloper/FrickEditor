@@ -3601,11 +3601,27 @@ impl FrickEditorApp {
 
             if let Some(rd) = &active_room_data {
                 for inst in &rd.instances {
-                    if inst.object.contains("Invisible") && !inst.object.contains("Barrier") && !inst.object.contains("Interaction") {
+                    let obj = &inst.object;
+
+                    // Omitir zonas lógicas invisibles que NO son geometría 3D física en el juego oficial:
+                    // (Barreras invisibles de colisión, puntos de interacción, triggers de sala y spawn)
+                    let is_invisible_logic = obj.contains("Invisible")
+                        || obj.contains("Barrier")
+                        || obj.contains("InteractionBarrier")
+                        || obj.contains("InteractionPoint")
+                        || obj.contains("Interaction_Point")
+                        || obj.contains("Interaction_Disappearing")
+                        || obj.contains("Interaction_Escape")
+                        || obj.contains("Interaction_Shop")
+                        || obj.contains("DisappearZone")
+                        || obj.contains("LoadZone")
+                        || obj.contains("EnemySpawn")
+                        || obj.contains("PatrolPoint")
+                        || obj.contains("Camera3D");
+
+                    if is_invisible_logic && !obj.contains("Animatronic") {
                         continue;
                     }
-
-                    let obj = &inst.object;
 
                     // 1. Animatrónicos auténticos del mapa
                     if obj.contains("Animatronic") {
@@ -3688,9 +3704,8 @@ impl FrickEditorApp {
                     let is_bed = obj.contains("Bed") || obj.contains("Sofa");
                     let is_shelf = obj.contains("Shelf") || obj.contains("Dresser") || obj.contains("PartsBox");
                     let is_chair = obj.contains("Chair");
-                    let is_barrier = obj.contains("Barrier") || obj.contains("InteractionBarrier") || obj.contains("Interaction_Barrier");
 
-                    if is_wall || is_stage || is_arcade || is_table || is_door || is_counter || is_bed || is_shelf || is_chair || is_barrier {
+                    if is_wall || is_stage || is_arcade || is_table || is_door || is_counter || is_bed || is_shelf || is_chair {
                         let hw = inst.sx * 16.0;
                         let hh = inst.sy * 16.0;
                         let cx = inst.x as f32;
@@ -3700,9 +3715,7 @@ impl FrickEditorApp {
                         let y0 = cy - hh;
                         let y1 = cy + hh;
 
-                        let (h_top, h_bot) = if is_barrier {
-                            (40.0_f32, 48.0_f32) // Barrera de colisión visible como cuadrícula de energía
-                        } else if is_stage {
+                        let (h_top, h_bot) = if is_stage {
                             (-16.0_f32, 48.0_f32) // Altura 32 sobre suelo
                         } else if is_table {
                             (-16.0_f32, 48.0_f32) // Altura 32 sobre suelo
@@ -3730,11 +3743,8 @@ impl FrickEditorApp {
                         let h_len = y1 - y0;
 
                         // Para máquinas recreativas: Norte y Sur son laterales (face_type 2), Oeste es frontal (face_type 1)
-                        // Para barreras de colisión: face_type 3 (Holograma de peligro anti-colisión)
                         let (fnorth, fsouth, fwest, feast) = if is_arcade {
                             (2, 2, 1, 0)
-                        } else if is_barrier {
-                            (3, 3, 3, 3)
                         } else {
                             (0, 0, 0, 0)
                         };
@@ -3829,13 +3839,7 @@ impl FrickEditorApp {
 
                         if pz > 8.0 && pz < 700.0 {
                             let screen_x = rect.center().x + (pcx / pz) * focal;
-                            let (prop_w_world, prop_h_world) = if obj.contains("Escape") {
-                                (48.0_f32, 72.0_f32)
-                            } else if obj.contains("Shop") || obj.contains("Mendo") || obj.contains("CandyCadet") {
-                                (40.0_f32, 64.0_f32)
-                            } else if obj.contains("InteractionPoint") || obj.contains("Interaction_Point") || obj.contains("Interaction") {
-                                (32.0_f32, 56.0_f32)
-                            } else if obj.contains("Sign") || obj.contains("Poster") {
+                            let (prop_w_world, prop_h_world) = if obj.contains("Sign") || obj.contains("Poster") {
                                 (32.0_f32, 48.0_f32)
                             } else if obj.contains("Vent") {
                                 (32.0_f32, 32.0_f32)
@@ -3998,91 +4002,76 @@ impl FrickEditorApp {
                         }
                     };
 
-                    if hit.face_type == 3 {
-                        // Barrera de colisión holográfica anti-choques (oInteractionBarrier)
-                        let bar_shade = (dist_shade * flash_intensity).clamp(0.20, 1.0);
-                        let stripe = (((col_x0 / 8.0) as i32) + ((self.sim_time * 6.0) as i32)) % 2 == 0;
-                        let bar_col = if stripe {
-                            Color32::from_rgba_unmultiplied(255, 140, 20, (140.0 * bar_shade) as u8)
-                        } else {
-                            Color32::from_rgba_unmultiplied(240, 30, 30, (170.0 * bar_shade) as u8)
+                    let is_pure_wall = hit.obj_name.contains("Wall")
+                        && !hit.obj_name.contains("Table")
+                        && !hit.obj_name.contains("Arcade")
+                        && !hit.obj_name.contains("Door")
+                        && !hit.obj_name.contains("Stage")
+                        && !hit.obj_name.contains("Counter")
+                        && !hit.obj_name.contains("Shelf")
+                        && !hit.obj_name.contains("Bed");
+
+                    if self.wall_style_tron && is_pure_wall {
+                        // 1. Panel base oscuro minimalista con tinte por locación
+                        let panel_dark = match self.selected_salvage_location {
+                            SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(10, 14, 20),
+                            SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(18, 14, 12),
+                            SalvageLocationIndex::Location3Fnaf3 => Color32::from_rgb(10, 18, 12),
+                            SalvageLocationIndex::Location4WilliamWoods => Color32::from_rgb(14, 10, 22),
+                            SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(12, 16, 26),
                         };
-                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, bar_col);
-                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y0 + 2.0)), 0.0, Color32::from_rgb(255, 230, 50));
-                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y1 - 2.0), Pos2::new(col_x1, y1)), 0.0, Color32::from_rgb(255, 230, 50));
-                    } else {
-                        let is_pure_wall = hit.obj_name.contains("Wall")
-                            && !hit.obj_name.contains("Table")
-                            && !hit.obj_name.contains("Arcade")
-                            && !hit.obj_name.contains("Door")
-                            && !hit.obj_name.contains("Stage")
-                            && !hit.obj_name.contains("Counter")
-                            && !hit.obj_name.contains("Shelf")
-                            && !hit.obj_name.contains("Bed")
-                            && !hit.obj_name.contains("Barrier");
+                        let p_shade = (dist_shade * angle_shade).clamp(0.10, 0.90);
+                        let p_col = Color32::from_rgba_unmultiplied(
+                            (panel_dark.r() as f32 * p_shade) as u8,
+                            (panel_dark.g() as f32 * p_shade) as u8,
+                            (panel_dark.b() as f32 * p_shade) as u8,
+                            255,
+                        );
+                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, p_col);
 
-                        if self.wall_style_tron && is_pure_wall {
-                            // 1. Panel base oscuro minimalista con tinte por locación
-                            let panel_dark = match self.selected_salvage_location {
-                                SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(10, 14, 20),
-                                SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(18, 14, 12),
-                                SalvageLocationIndex::Location3Fnaf3 => Color32::from_rgb(10, 18, 12),
-                                SalvageLocationIndex::Location4WilliamWoods => Color32::from_rgb(14, 10, 22),
-                                SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(12, 16, 26),
-                            };
-                            let p_shade = (dist_shade * angle_shade).clamp(0.10, 0.90);
-                            let p_col = Color32::from_rgba_unmultiplied(
-                                (panel_dark.r() as f32 * p_shade) as u8,
-                                (panel_dark.g() as f32 * p_shade) as u8,
-                                (panel_dark.b() as f32 * p_shade) as u8,
-                                255,
-                            );
-                            painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, p_col);
+                        // 2. Neón brillante reactivo a linterna y distancia
+                        let neon_base = match self.selected_salvage_location {
+                            SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(0, 235, 255), // Cyan eléctrico
+                            SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(255, 165, 30), // Ámbar neón
+                            SalvageLocationIndex::Location3Fnaf3 => Color32::from_rgb(45, 255, 110), // Verde esmeralda
+                            SalvageLocationIndex::Location4WilliamWoods => Color32::from_rgb(160, 95, 255), // Violeta profundo
+                            SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(255, 50, 160), // Magenta neón
+                        };
+                        let n_bright = (dist_shade * flash_intensity).clamp(0.25, 1.0);
+                        let neon_col = Color32::from_rgba_unmultiplied(
+                            (neon_base.r() as f32 * n_bright) as u8,
+                            (neon_base.g() as f32 * n_bright) as u8,
+                            (neon_base.b() as f32 * n_bright) as u8,
+                            255,
+                        );
 
-                            // 2. Neón brillante reactivo a linterna y distancia
-                            let neon_base = match self.selected_salvage_location {
-                                SalvageLocationIndex::Location1Fnaf1 => Color32::from_rgb(0, 235, 255), // Cyan eléctrico
-                                SalvageLocationIndex::Location2Fnaf2 => Color32::from_rgb(255, 165, 30), // Ámbar neón
-                                SalvageLocationIndex::Location3Fnaf3 => Color32::from_rgb(45, 255, 110), // Verde esmeralda
-                                SalvageLocationIndex::Location4WilliamWoods => Color32::from_rgb(160, 95, 255), // Violeta profundo
-                                SalvageLocationIndex::Location5SisterLocation => Color32::from_rgb(255, 50, 160), // Magenta neón
-                            };
-                            let n_bright = (dist_shade * flash_intensity).clamp(0.25, 1.0);
-                            let neon_col = Color32::from_rgba_unmultiplied(
-                                (neon_base.r() as f32 * n_bright) as u8,
-                                (neon_base.g() as f32 * n_bright) as u8,
-                                (neon_base.b() as f32 * n_bright) as u8,
-                                255,
-                            );
+                        let seam_h = (focal * 2.5 / perp_dist.max(1.0)).clamp(2.0, 6.0);
+                        // Borde superior (techo)
+                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y0 + seam_h)), 0.0, neon_col);
+                        // Borde inferior (suelo)
+                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y1 - seam_h), Pos2::new(col_x1, y1)), 0.0, neon_col);
 
-                            let seam_h = (focal * 2.5 / perp_dist.max(1.0)).clamp(2.0, 6.0);
-                            // Borde superior (techo)
-                            painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y0 + seam_h)), 0.0, neon_col);
-                            // Borde inferior (suelo)
-                            painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y1 - seam_h), Pos2::new(col_x1, y1)), 0.0, neon_col);
-
-                            // Franja vertical de cuadrícula cada 32 unidades
-                            if u_cont < 0.05 || u_cont > 0.95 {
-                                painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, neon_col);
-                            }
-
-                            // Franja horizontal central (cinturón TRON a media altura)
-                            let y_mid = (y0 + y1) * 0.5;
-                            let mid_h = (focal * 1.2 / perp_dist.max(1.0)).clamp(1.2, 3.0);
-                            painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y_mid - mid_h * 0.5), Pos2::new(col_x1, y_mid + mid_h * 0.5)), 0.0, neon_col);
-                        } else if let Some(tid) = hit.tex_id {
-                            let mut mesh = egui::Mesh::with_texture(tid);
-                            let idx = mesh.vertices.len() as u32;
-                            mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y0), uv: Pos2::new(u0, 0.0), color: col });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y0), uv: Pos2::new(u1, 0.0), color: col });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y1), uv: Pos2::new(u1, 1.0), color: col });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y1), uv: Pos2::new(u0, 1.0), color: col });
-                            mesh.add_triangle(idx, idx + 1, idx + 2);
-                            mesh.add_triangle(idx, idx + 2, idx + 3);
-                            painter.add(egui::Shape::mesh(mesh));
-                        } else {
-                            painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, col);
+                        // Franja vertical de cuadrícula cada 32 unidades
+                        if u_cont < 0.05 || u_cont > 0.95 {
+                            painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, neon_col);
                         }
+
+                        // Franja horizontal central (cinturón TRON a media altura)
+                        let y_mid = (y0 + y1) * 0.5;
+                        let mid_h = (focal * 1.2 / perp_dist.max(1.0)).clamp(1.2, 3.0);
+                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y_mid - mid_h * 0.5), Pos2::new(col_x1, y_mid + mid_h * 0.5)), 0.0, neon_col);
+                    } else if let Some(tid) = hit.tex_id {
+                        let mut mesh = egui::Mesh::with_texture(tid);
+                        let idx = mesh.vertices.len() as u32;
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y0), uv: Pos2::new(u0, 0.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y0), uv: Pos2::new(u1, 0.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x1, y1), uv: Pos2::new(u1, 1.0), color: col });
+                        mesh.vertices.push(egui::epaint::Vertex { pos: Pos2::new(col_x0, y1), uv: Pos2::new(u0, 1.0), color: col });
+                        mesh.add_triangle(idx, idx + 1, idx + 2);
+                        mesh.add_triangle(idx, idx + 2, idx + 3);
+                        painter.add(egui::Shape::mesh(mesh));
+                    } else {
+                        painter.rect_filled(Rect::from_min_max(Pos2::new(col_x0, y0), Pos2::new(col_x1, y1)), 0.0, col);
                     }
                 }
             }
@@ -4115,21 +4104,6 @@ impl FrickEditorApp {
                 if !occluded {
                     if let Some(tid) = prop.tex_id {
                         painter.image(tid, prop.rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), prop.col);
-                    } else if prop.obj_name.contains("Escape") {
-                        let holo_col = Color32::from_rgba_unmultiplied(40, 240, 100, 160);
-                        painter.rect_filled(prop.rect, 4.0, holo_col);
-                        painter.rect_stroke(prop.rect, 4.0, Stroke::new(2.0_f32, Color32::from_rgb(60, 255, 120)));
-                        painter.text(prop.rect.center(), egui::Align2::CENTER_CENTER, "🚪 ESCAPE", egui::FontId::proportional(11.0), Color32::WHITE);
-                    } else if prop.obj_name.contains("Interaction") {
-                        let holo_col = Color32::from_rgba_unmultiplied(0, 220, 255, 160);
-                        painter.rect_filled(prop.rect, 4.0, holo_col);
-                        painter.rect_stroke(prop.rect, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(0, 240, 255)));
-                        painter.text(prop.rect.center(), egui::Align2::CENTER_CENTER, "⚡ SALVAGE", egui::FontId::proportional(11.0), Color32::WHITE);
-                    } else if prop.obj_name.contains("Shop") || prop.obj_name.contains("Mendo") || prop.obj_name.contains("CandyCadet") {
-                        let holo_col = Color32::from_rgba_unmultiplied(255, 200, 30, 160);
-                        painter.rect_filled(prop.rect, 4.0, holo_col);
-                        painter.rect_stroke(prop.rect, 4.0, Stroke::new(1.5_f32, Color32::from_rgb(255, 220, 60)));
-                        painter.text(prop.rect.center(), egui::Align2::CENTER_CENTER, "🛒 TIENDA", egui::FontId::proportional(11.0), Color32::WHITE);
                     } else if prop.obj_name.contains("Poster") || prop.obj_name.contains("Sign") {
                         let holo_col = Color32::from_rgba_unmultiplied(255, 80, 180, 150);
                         painter.rect_filled(prop.rect, 2.0, holo_col);
@@ -4140,8 +4114,6 @@ impl FrickEditorApp {
                         painter.rect_filled(prop.rect, 2.0, holo_col);
                         painter.rect_stroke(prop.rect, 2.0, Stroke::new(1.0_f32, Color32::from_rgb(190, 120, 255)));
                         painter.text(prop.rect.center(), egui::Align2::CENTER_CENTER, "💨 VENT", egui::FontId::proportional(10.0), Color32::WHITE);
-                    } else {
-                        painter.rect_filled(prop.rect, 2.0, prop.col);
                     }
 
                     if prop.pcx.abs() < (prop.pz * 0.12) && prop.pz < 280.0 {
