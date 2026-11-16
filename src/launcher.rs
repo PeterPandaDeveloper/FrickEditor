@@ -151,15 +151,215 @@ impl GameLauncher {
         Ok(target)
     }
 
+    /// Mueve de forma segura archivos o carpetas, soportando operaciones entre diferentes unidades de disco
+    pub fn safe_move(src: &Path, dst: &Path) -> std::io::Result<()> {
+        if !src.exists() {
+            return Ok(());
+        }
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if dst.exists() {
+            if dst.is_dir() {
+                let _ = std::fs::remove_dir_all(dst);
+            } else {
+                let _ = std::fs::remove_file(dst);
+            }
+        }
+        if std::fs::rename(src, dst).is_err() {
+            if src.is_dir() {
+                Self::copy_dir_all(src, dst)?;
+                let _ = std::fs::remove_dir_all(src);
+            } else {
+                std::fs::copy(src, dst)?;
+                let _ = std::fs::remove_file(src);
+            }
+        }
+        Ok(())
+    }
+
+    /// Copia recursiva de un directorio completo
+    pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest_path = dst.join(entry.file_name());
+            if path.is_dir() {
+                Self::copy_dir_all(&path, &dest_path)?;
+            } else {
+                std::fs::copy(&path, &dest_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Obtiene la ruta del directorio sandbox de Frickbears3 en %LOCALAPPDATA%
+    pub fn get_localappdata_dir() -> Option<PathBuf> {
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(local) = std::env::var("LOCALAPPDATA") {
+                let p = PathBuf::from(local).join("Frickbears3");
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
+
+    /// Aisla herméticamente todos los elementos de mods hacia la bóveda (.frick_vault)
+    /// Garantiza que el juego arranque como Vanilla Oficial 100% puro (sin Murray en la galería ni audios externos)
+    pub fn isolate_mods_for_vanilla(game_dir: &Path) -> Result<(), String> {
+        let vault_dir = game_dir.join(".frick_vault");
+        let vault_addons = vault_dir.join("addons");
+        let vault_audio = vault_dir.join("audio");
+        let vault_local = vault_dir.join("localappdata");
+
+        let _ = std::fs::create_dir_all(&vault_addons);
+        let _ = std::fs::create_dir_all(&vault_audio);
+        let _ = std::fs::create_dir_all(&vault_local);
+
+        // 1. Aislar carpetas dentro de game_dir/addons (ej. addons/Murray)
+        let game_addons = game_dir.join("addons");
+        if game_addons.exists() {
+            if let Ok(entries) = std::fs::read_dir(&game_addons) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name();
+                    let target = vault_addons.join(&name);
+                    let _ = Self::safe_move(&path, &target);
+                }
+            }
+        }
+
+        // 2. Aislar archivos de audio sueltos de mods (*.ogg) en la raíz del juego
+        if let Ok(entries) = std::fs::read_dir(game_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        if ext.eq_ignore_ascii_case("ogg") {
+                            let name = entry.file_name();
+                            let target = vault_audio.join(&name);
+                            let _ = Self::safe_move(&path, &target);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Aislar archivos de audio y addons en %LOCALAPPDATA%\Frickbears3
+        if let Some(local_dir) = Self::get_localappdata_dir() {
+            if let Ok(entries) = std::fs::read_dir(&local_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy().to_lowercase();
+                    if path.is_file() {
+                        if name_str.ends_with(".ogg") || name_str.starts_with("murray_") || name_str.starts_with("snd_murray_") {
+                            let target = vault_local.join(&name);
+                            let _ = Self::safe_move(&path, &target);
+                        }
+                    } else if path.is_dir() && name_str == "addons" {
+                        let local_addons_vault = vault_local.join("addons");
+                        let _ = std::fs::create_dir_all(&local_addons_vault);
+                        if let Ok(subentries) = std::fs::read_dir(&path) {
+                            for sub in subentries.flatten() {
+                                let sub_path = sub.path();
+                                let sub_target = local_addons_vault.join(sub.file_name());
+                                let _ = Self::safe_move(&sub_path, &sub_target);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Restaura los archivos de mods desde la bóveda (.frick_vault) de vuelta al directorio del juego
+    pub fn restore_mods_from_vault(game_dir: &Path) -> Result<(), String> {
+        let vault_dir = game_dir.join(".frick_vault");
+        if !vault_dir.exists() {
+            return Ok(());
+        }
+
+        let vault_addons = vault_dir.join("addons");
+        let vault_audio = vault_dir.join("audio");
+        let vault_local = vault_dir.join("localappdata");
+
+        // 1. Restaurar carpetas de addons (ej. addons/Murray)
+        if vault_addons.exists() {
+            let game_addons = game_dir.join("addons");
+            let _ = std::fs::create_dir_all(&game_addons);
+            if let Ok(entries) = std::fs::read_dir(&vault_addons) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name();
+                    let target = game_addons.join(&name);
+                    let _ = Self::safe_move(&path, &target);
+                }
+            }
+        }
+
+        // 2. Restaurar audios a la raíz del juego
+        if vault_audio.exists() {
+            if let Ok(entries) = std::fs::read_dir(&vault_audio) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = entry.file_name();
+                    let target = game_dir.join(&name);
+                    let _ = Self::safe_move(&path, &target);
+                }
+            }
+        }
+
+        // 3. Restaurar audios y addons a %LOCALAPPDATA%\Frickbears3
+        if vault_local.exists() {
+            if let Some(local_dir) = Self::get_localappdata_dir() {
+                if let Ok(entries) = std::fs::read_dir(&vault_local) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy().to_lowercase();
+                        if path.is_dir() && name_str == "addons" {
+                            let target_addons = local_dir.join("addons");
+                            let _ = std::fs::create_dir_all(&target_addons);
+                            if let Ok(subentries) = std::fs::read_dir(&path) {
+                                for sub in subentries.flatten() {
+                                    let sub_path = sub.path();
+                                    let sub_target = target_addons.join(sub.file_name());
+                                    let _ = Self::safe_move(&sub_path, &sub_target);
+                                }
+                            }
+                        } else if path.is_file() {
+                            let target = local_dir.join(&name);
+                            let _ = Self::safe_move(&path, &target);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Restaura el archivo data.win original limpio desde el respaldo intacto
+    /// e inmuniza aislando todo rastro de mods fuera de las rutas de carga del juego.
     pub fn restore_vanilla_data(game_dir: &Path) -> Result<PathBuf, String> {
         let backup = Self::ensure_vanilla_backup(game_dir)?;
         let data_win = game_dir.join("data.win");
 
+        // 1. Aislar herméticamente addons, audios y localappdata en la bóveda
+        Self::isolate_mods_for_vanilla(game_dir)?;
+
+        // 2. Restaurar el archivo data.win original limpio
         std::fs::copy(&backup, &data_win)
             .map_err(|e| format!("Error restaurando data.win desde el respaldo: {}", e))?;
 
-        // Guardar metadata de perfil activo
+        // 3. Guardar metadata de perfil activo
         Self::save_profile_state(game_dir, ActiveGameProfile::Vanilla, &[]);
 
         Ok(data_win)
@@ -248,6 +448,33 @@ impl GameLauncher {
 
         let active_profile = Self::get_profile_state(game_dir);
         details.push(format!("Perfil activo actual: {}", active_profile.display_name()));
+
+        let vault_dir = game_dir.join(".frick_vault");
+        let vault_addons_count = if vault_dir.join("addons").exists() {
+            std::fs::read_dir(vault_dir.join("addons")).map(|e| e.count()).unwrap_or(0)
+        } else {
+            0
+        };
+        let active_addons_count = if game_dir.join("addons").exists() {
+            std::fs::read_dir(game_dir.join("addons")).map(|e| e.count()).unwrap_or(0)
+        } else {
+            0
+        };
+
+        if active_profile == ActiveGameProfile::Vanilla {
+            if active_addons_count == 0 {
+                details.push("🛡️ Aislamiento Vanilla: Directorio addons/ 100% limpio (0 mods activos en galería).".to_string());
+            } else {
+                details.push(format!("⚠️ Hay {} carpeta(s) en addons/ mientras se está en perfil Vanilla.", active_addons_count));
+            }
+            if vault_addons_count > 0 {
+                details.push(format!("📦 Bóveda de Mods: {} mod(s) archivados listos para restaurar al volver a Modded.", vault_addons_count));
+            }
+        } else {
+            details.push(format!("🚀 Mods activos en el juego: {} carpeta(s) en addons/.", active_addons_count));
+        }
+
+        details.push("⚡ Optimización Anti-Lag: Reposo de CPU en segundo plano y límite a 60 FPS activos.".to_string());
 
         let is_healthy = game_exe.is_some() && data_win_exists && (vanilla_backup_exists || data_win_size == 31020384);
 
@@ -483,11 +710,17 @@ impl GameLauncher {
         let game_exe = Self::find_game_executable(game_dir)
             .ok_or_else(|| format!("No se pudo encontrar el ejecutable del juego en {}", game_dir.display()))?;
 
-        // 1 & 2. Blindaje estilo Minecraft: Asegurar respaldo y restaurar base limpia antes de inyectar
-        let _ = Self::ensure_vanilla_backup(game_dir)?;
-        Self::restore_vanilla_data(game_dir)?;
+        // 1. Blindaje estilo Minecraft: Asegurar respaldo vanilla intacto
+        let backup = Self::ensure_vanilla_backup(game_dir)?;
 
-        // 3. Construir todos los mods activos y generar `master_injector.csx`
+        // 2. Restaurar data.win limpio como base intocable antes de la inyección fresca
+        std::fs::copy(&backup, &data_win_path)
+            .map_err(|e| format!("Error al restaurar data.win base limpio: {}", e))?;
+
+        // 3. Restaurar archivos de mods desde la bóveda (.frick_vault) hacia el juego
+        let _ = Self::restore_mods_from_vault(game_dir);
+
+        // 4. Construir todos los mods activos y generar `master_injector.csx`
         let master_csx_path = IdeBuilder::build_all_active_mods(active_mods, game_dir, utmt_scripts_dir, true)?;
 
         // 4. Inyección silenciosa o preparación en UTMT

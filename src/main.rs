@@ -22,6 +22,7 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1120.0, 740.0])
             .with_min_inner_size([940.0, 620.0])
             .with_title("FrickEditor Studio — Suite Completa de Animatrónicos"),
+        vsync: true,
         ..Default::default()
     };
     eframe::run_native(
@@ -235,19 +236,21 @@ impl FrickEditorApp {
         }
     }
 
-    fn handle_one_click_play(&mut self) {
-        self.handle_play_modded();
+    fn handle_one_click_play(&mut self, ctx: &egui::Context) {
+        self.handle_play_modded(ctx);
     }
 
-    fn handle_play_vanilla(&mut self) {
-        self.status_message = "Restaurando data.win limpio e iniciando Modo Vanilla...".to_string();
+    fn handle_play_vanilla(&mut self, ctx: &egui::Context) {
+        self.status_message = "Aislando mods en bóveda, restaurando data.win e iniciando Modo Vanilla...".to_string();
         self.status_is_error = false;
         match GameLauncher::launch_vanilla(&self.project.game_dir) {
             Ok(msg) => {
                 self.active_profile = ActiveGameProfile::Vanilla;
                 self.status_is_error = false;
                 self.status_message = msg;
-                self.show_toast(format!("{} Juego Vanilla iniciado sin mods.", ic::CHECK_CIRCLE), false);
+                self.show_toast(format!("{} Vanilla Oficial 100% puro. FrickEditor minimizado para máximo rendimiento.", ic::CHECK_CIRCLE), false);
+                // Minimizar ventana para ceder el 100% de CPU y GPU al juego
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
             Err(err) => {
                 self.status_is_error = true;
@@ -257,7 +260,7 @@ impl FrickEditorApp {
         }
     }
 
-    fn handle_play_modded(&mut self) {
+    fn handle_play_modded(&mut self, ctx: &egui::Context) {
         // 1. Sincronizar el proyecto actual en el gestor
         self.mod_manager.add_or_update_mod(self.project.clone());
 
@@ -291,6 +294,8 @@ impl FrickEditorApp {
                 self.status_is_error = false;
                 self.status_message = msg;
                 self.show_toast(format!("{} Modo Modded: Murray & Amigos activos.", ic::ROCKET_LAUNCH), false);
+                // Minimizar ventana para ceder el 100% de CPU y GPU al juego
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
             Err(err) => {
                 self.status_is_error = true;
@@ -390,10 +395,8 @@ impl FrickEditorApp {
 impl eframe::App for FrickEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dt = ctx.input(|i| i.stable_dt);
-        if !(self.active_tab == ActiveTab::Environment3DBuilder && self.salvage_sim_paused) {
-            self.sim_time += dt;
-        }
-        ctx.request_repaint();
+        let is_focused = ctx.input(|i| i.focused);
+        let is_minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
 
         // Actualizar temporizador de Toast flotante
         if let Some((_, _, ref mut time)) = self.toast_message {
@@ -401,6 +404,27 @@ impl eframe::App for FrickEditorApp {
             if *time <= 0.0 {
                 self.toast_message = None;
             }
+        }
+
+        // CONTROL DE REFRESH Y CONSUMO DE CPU (Modo Anti-Lag & Ahorro de Energía)
+        if !is_focused || is_minimized {
+            // FrickEditor está en segundo plano o minimizado (el usuario está jugando al juego).
+            // Ahorro extremo de energía: NO renderizar animaciones y dormir el hilo para consumo 0.0% de CPU.
+            if self.toast_message.is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            }
+        } else {
+            // Solo cuando la ventana tiene el foco activo del usuario:
+            if self.active_tab == ActiveTab::LiveAnimationPreview 
+                || (self.active_tab == ActiveTab::Environment3DBuilder && !self.salvage_sim_paused) {
+                self.sim_time += dt;
+                // 60 FPS estables (16.6ms) para las vistas animadas en tiempo real
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            } else if self.toast_message.is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            // En el resto de pestañas estáticas no se llama a request_repaint;
+            // egui reacciona y redibuja automáticamente ante eventos del mouse/teclado.
         }
 
         // Atajos de Teclado Globales (Ergonomía & Comodidad)
@@ -416,7 +440,7 @@ impl eframe::App for FrickEditorApp {
             }
             // F5: PLAY (Inyectar y Jugar)
             if i.key_pressed(egui::Key::F5) {
-                self.handle_one_click_play();
+                self.handle_one_click_play(ctx);
             }
             // Alt + 0..6: Cambiar de Pestaña Rápido
             if i.modifiers.alt {
@@ -456,7 +480,7 @@ impl eframe::App for FrickEditorApp {
                 .min_size(Vec2::new(96.0, 25.0));
 
                 if ui.add(play_vanilla_btn).on_hover_text("Restaura data.win original limpio desde el respaldo intacto y abre el juego sin mods").clicked() {
-                    self.handle_play_vanilla();
+                    self.handle_play_vanilla(ctx);
                 }
 
                 ui.add_space(3.0);
@@ -471,7 +495,7 @@ impl eframe::App for FrickEditorApp {
                 .min_size(Vec2::new(100.0, 25.0));
 
                 if ui.add(play_modded_btn).on_hover_text("Inyecta los animatrónicos activos (Murray y amigos) sobre la base limpia y arranca el juego").clicked() {
-                    self.handle_play_modded();
+                    self.handle_play_modded(ctx);
                 }
 
                 ui.add_space(3.0);
@@ -684,7 +708,7 @@ impl eframe::App for FrickEditorApp {
                 .min_size(Vec2::new(210.0, 38.0));
 
                 if ui.add(play_footer_btn).clicked() {
-                    self.handle_one_click_play();
+                    self.handle_one_click_play(ctx);
                 }
 
                 ui.add_space(6.0);
@@ -694,6 +718,7 @@ impl eframe::App for FrickEditorApp {
                             Ok(_) => {
                                 self.status_message = format!("Juego iniciado: {}", game_exe.file_name().unwrap_or_default().to_string_lossy());
                                 self.status_is_error = false;
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                             }
                             Err(e) => {
                                 self.status_message = format!("Error iniciando juego: {}", e);
@@ -1086,7 +1111,7 @@ impl FrickEditorApp {
                             .min_size(Vec2::new(ui.available_width(), 36.0));
 
                             if ui.add(v_btn).on_hover_text("Restaura el data.win limpio y ejecuta el juego oficial").clicked() {
-                                self.handle_play_vanilla();
+                                self.handle_play_vanilla(ctx);
                             }
                         });
 
@@ -1116,7 +1141,7 @@ impl FrickEditorApp {
                             .min_size(Vec2::new(ui.available_width(), 36.0));
 
                             if ui.add(m_btn).on_hover_text("Inyecta los mods activos sobre la base limpia y arranca el juego").clicked() {
-                                self.handle_play_modded();
+                                self.handle_play_modded(ctx);
                             }
                         });
                 });
@@ -1820,9 +1845,6 @@ impl FrickEditorApp {
     // PESTAÑA 3: SIMULADOR DE ANIMACIÓN EN VIVO (60 FPS)
     // --------------------------------------------------------------
     fn ui_live_animation_tab(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        ctx.request_repaint(); // Mantener 60 FPS solo mientras estamos en la pestaña de simulación
-        self.sim_time += ctx.input(|i| i.stable_dt);
-
         ui.horizontal(|ui| {
             ui.heading(format!("{}  Previsualizador de Estados y Animación en Tiempo Real", ic::FILM_STRIP));
             ui.add_space(16.0);
